@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f3efe5" />
+    <title>Gridline — Floor Plan Studio</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header class="topbar">
+        <a class="brand" href="#" aria-label="Gridline home">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <span>Gridline</span>
+        </a>
+        <div class="project-title">
+          <span class="eyebrow">Current plan</span>
+          <strong id="projectName">Untitled plan</strong>
+        </div>
+        <div class="top-actions">
+          <span id="saveStatus" class="save-status">Saved locally</span>
+          <input id="loadInput" type="file" accept="application/json,.json" hidden />
+          <button id="newProjectButton" class="button button-light">New Project</button>
+          <button id="serverLoadButton" class="button button-light">Open</button>
+          <button id="serverSaveButton" class="button button-dark">Save</button>
+          <button id="exportButton" class="button button-dark">Export PNG</button>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <aside class="toolbar" aria-label="Drawing tools">
+          <button class="tool active" data-tool="wall" title="Draw walls (W)">
+            <span class="tool-icon wall-icon"></span><span>Wall</span>
+          </button>
+          <button class="tool" data-tool="edit" title="Edit wall endpoints (V)">
+            <span class="tool-icon edit-icon">↔</span><span>Edit</span>
+          </button>
+          <button class="tool" data-tool="text" title="Add and move text labels (T)">
+            <span class="tool-icon text-icon">T</span><span>Text</span>
+          </button>
+          <button class="tool" data-tool="erase" title="Erase walls (E)">
+            <span class="tool-icon erase-icon">⌫</span><span>Erase</span>
+          </button>
+          <button class="tool" data-tool="pan" title="Move the grid (P)">
+            <span class="tool-icon pan-icon">✥</span><span>Pan</span>
+          </button>
+          <div class="tool-divider"></div>
+          <button id="undoButton" class="tool compact" title="Undo (Ctrl+Z)"><span class="tool-icon">↶</span><span>Undo</span></button>
+          <button id="redoButton" class="tool compact" title="Redo (Ctrl+Shift+Z)"><span class="tool-icon">↷</span><span>Redo</span></button>
+          <button id="centerButton" class="tool compact" title="Center the grid"><span class="tool-icon">⌾</span><span>Center</span></button>
+        </aside>
+
+        <section class="canvas-shell">
+          <canvas id="planCanvas" aria-label="Floor plan drawing canvas"></canvas>
+          <div class="canvas-help"><span id="modeLabel">Wall tool</span> · <span id="modeHelp" class="help-copy">Drag between grid points · Hold Shift for a straight wall</span></div>
+          <div class="zoom-controls">
+            <button id="zoomOut" aria-label="Zoom out">−</button>
+            <span id="zoomLabel">100%</span>
+            <button id="zoomIn" aria-label="Zoom in">+</button>
+          </div>
+        </section>
+
+        <aside class="inspector">
+          <div class="inspector-heading">
+            <span class="eyebrow">Plan settings</span>
+            <button id="clearButton" class="text-button">Clear</button>
+          </div>
+          <label class="field">
+            <span>Grid spacing</span>
+            <select id="gridSize">
+              <option value="3">3 inches</option>
+              <option value="6">6 inches</option>
+              <option value="12" selected>1 foot</option>
+              <option value="24">2 feet</option>
+            </select>
+          </label>
+          <div class="portable-actions">
+            <span class="eyebrow">Portable file</span>
+            <div>
+              <button id="loadButton" class="button button-light">Load JSON</button>
+              <button id="saveButton" class="button button-light">Download</button>
+            </div>
+          </div>
+          <label class="field">
+            <span>Wall thickness</span>
+            <div class="range-row">
+              <input id="wallWidth" type="range" min="3" max="12" value="6" />
+              <output id="wallWidthValue">6 in</output>
+            </div>
+          </label>
+          <label id="textSizeField" class="field text-size-field">
+            <span>Selected text size</span>
+            <div class="range-row">
+              <input id="labelSize" type="range" min="10" max="48" step="1" value="16" disabled />
+              <output id="labelSizeValue">—</output>
+            </div>
+          </label>
+          <div class="legend-card">
+            <span class="legend-swatch"></span>
+            <div><strong id="wallCount">0 walls</strong><small>Every point snaps to the grid</small></div>
+          </div>
+          <section class="wall-list-panel">
+            <div class="wall-list-heading">
+              <span class="eyebrow">Plan elements</span>
+            </div>
+            <div class="element-lists">
+              <div class="element-section-heading"><span>Lines</span><span id="totalLength">0 ft</span></div>
+              <ol id="wallList" class="wall-list"><li class="empty-list">Draw a wall to see its length.</li></ol>
+              <div class="element-section-heading"><span>Text labels</span><span id="labelCount">0</span></div>
+              <ul id="labelList" class="wall-list label-list"><li class="empty-list">Add text to see it here.</li></ul>
+            </div>
+          </section>
+        </aside>
+      </main>
+    </div>
+    <dialog id="serverDialog" class="server-dialog">
+      <div class="dialog-heading">
+        <div><span class="eyebrow">Server plans</span><h2>Open a floor plan</h2></div>
+        <button id="closeServerDialog" class="dialog-close" aria-label="Close">×</button>
+      </div>
+      <div id="serverPlanList" class="server-plan-list"></div>
+    </dialog>
+    <dialog id="newProjectDialog" class="server-dialog confirm-dialog">
+      <div class="dialog-heading">
+        <div><span class="eyebrow">Unsaved changes</span><h2>Save before starting over?</h2></div>
+        <button id="cancelNewProjectIcon" class="dialog-close" aria-label="Cancel">×</button>
+      </div>
+      <p class="confirm-message">Your current plan has changes that have not been saved. Save them before opening a new canvas?</p>
+      <div class="confirm-actions">
+        <button id="cancelNewProject" class="button button-light">Cancel</button>
+        <button id="discardNewProject" class="button button-light danger-button">Discard</button>
+        <button id="saveNewProject" class="button button-dark">Save</button>
+      </div>
+    </dialog>
+    <script src="./app.js" defer></script>
+  </body>
+</html>

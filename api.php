@@ -8,6 +8,8 @@ header('X-Content-Type-Options: nosniff');
 const MAX_BODY_BYTES = 2097152;
 const MAX_WALLS = 10000;
 const MAX_LABELS = 2000;
+const MAX_RULERS = 5000;
+const MAX_SHAPES = 5000;
 
 function respond(int $status, array $payload): void
 {
@@ -40,7 +42,8 @@ function validate_plan($plan): void
     }
     if (count($plan['walls']) > MAX_WALLS) respond(422, ['error' => 'The plan contains too many walls.']);
     foreach ($plan['walls'] as $wall) {
-        if (!is_array($wall) || !valid_point($wall['a'] ?? null) || !valid_point($wall['b'] ?? null)) {
+        if (!is_array($wall) || !valid_point($wall['a'] ?? null) || !valid_point($wall['b'] ?? null)
+            || (isset($wall['thickness']) && (!finite_number($wall['thickness']) || $wall['thickness'] < 3 || $wall['thickness'] > 12))) {
             respond(422, ['error' => 'The plan contains an invalid wall.']);
         }
     }
@@ -51,6 +54,25 @@ function validate_plan($plan): void
             || strlen($label['text']) > 800 || !valid_point($label)
             || (isset($label['fontSize']) && (!finite_number($label['fontSize']) || $label['fontSize'] < 10 || $label['fontSize'] > 48))) {
             respond(422, ['error' => 'The plan contains an invalid text label.']);
+        }
+    }
+    $rulers = $plan['rulers'] ?? [];
+    if (!is_array($rulers) || count($rulers) > MAX_RULERS) respond(422, ['error' => 'The plan contains invalid rulers.']);
+    foreach ($rulers as $ruler) {
+        if (!is_array($ruler) || !valid_point($ruler['a'] ?? null) || !valid_point($ruler['b'] ?? null)) {
+            respond(422, ['error' => 'The plan contains an invalid ruler.']);
+        }
+    }
+    $shapes = $plan['shapes'] ?? [];
+    if (!is_array($shapes) || count($shapes) > MAX_SHAPES) respond(422, ['error' => 'The plan contains invalid shapes.']);
+    foreach ($shapes as $shape) {
+        $type = is_array($shape) ? ($shape['type'] ?? '') : '';
+        $linear = $type === 'square' || $type === 'line';
+        $radial = $type === 'circle' || $type === 'semicircle';
+        if ((!$linear && !$radial)
+            || ($linear && (!valid_point($shape['a'] ?? null) || !valid_point($shape['b'] ?? null)))
+            || ($radial && (!valid_point($shape['center'] ?? null) || !isset($shape['radius']) || !finite_number($shape['radius']) || $shape['radius'] < 0))) {
+            respond(422, ['error' => 'The plan contains an invalid shape.']);
         }
     }
 }

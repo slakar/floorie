@@ -36,6 +36,12 @@
           <button class="tool" data-tool="edit" title="Edit wall endpoints (V)">
             <span class="tool-icon edit-icon">↔</span><span>Edit</span>
           </button>
+          <button class="tool" data-tool="ruler" title="Measure between any two points (R)">
+            <span class="tool-icon ruler-icon">↦</span><span>Ruler</span>
+          </button>
+          <button class="tool" data-tool="shapes" title="Insert shapes (S)">
+            <span class="tool-icon shapes-icon">◇</span><span>Shapes</span>
+          </button>
           <button class="tool" data-tool="text" title="Add and move text labels (T)">
             <span class="tool-icon text-icon">T</span><span>Text</span>
           </button>
@@ -49,6 +55,12 @@
           <button id="undoButton" class="tool compact" title="Undo (Ctrl+Z)"><span class="tool-icon">↶</span><span>Undo</span></button>
           <button id="redoButton" class="tool compact" title="Redo (Ctrl+Shift+Z)"><span class="tool-icon">↷</span><span>Redo</span></button>
           <button id="centerButton" class="tool compact" title="Center the grid"><span class="tool-icon">⌾</span><span>Center</span></button>
+        </aside>
+        <aside id="shapePalette" class="shape-palette" aria-label="Shape choices" hidden>
+          <button class="shape-choice active" data-shape="square" title="Square"><span>□</span><small>Square</small></button>
+          <button class="shape-choice" data-shape="circle" title="Circle"><span>○</span><small>Circle</small></button>
+          <button class="shape-choice" data-shape="line" title="Line"><span>╱</span><small>Line</small></button>
+          <button class="shape-choice" data-shape="semicircle" title="Semi-circle"><span>◠</span><small>Half</small></button>
         </aside>
 
         <section class="canvas-shell">
@@ -75,6 +87,11 @@
               <option value="24">2 feet</option>
             </select>
           </label>
+          <div class="visibility-controls">
+            <span class="eyebrow">Visibility</span>
+            <label><input id="showText" type="checkbox" checked /><span>Text</span></label>
+            <label><input id="showDimensions" type="checkbox" checked /><span>Dimensions</span></label>
+          </div>
           <div class="portable-actions">
             <span class="eyebrow">Portable file</span>
             <div>
@@ -83,10 +100,10 @@
             </div>
           </div>
           <label class="field">
-            <span>Wall thickness</span>
+            <span>Selected line thickness</span>
             <div class="range-row">
-              <input id="wallWidth" type="range" min="3" max="12" value="6" />
-              <output id="wallWidthValue">6 in</output>
+              <input id="wallWidth" type="range" min="3" max="12" value="6" disabled />
+              <output id="wallWidthValue">—</output>
             </div>
           </label>
           <label id="textSizeField" class="field text-size-field">
@@ -107,8 +124,12 @@
             <div class="element-lists">
               <div class="element-section-heading"><span>Lines</span><span id="totalLength">0 ft</span></div>
               <ol id="wallList" class="wall-list"><li class="empty-list">Draw a wall to see its length.</li></ol>
+              <div class="element-section-heading"><span>Rulers</span><span id="rulerCount">0</span></div>
+              <ul id="rulerList" class="wall-list"><li class="empty-list">Measure between two points.</li></ul>
               <div class="element-section-heading"><span>Text labels</span><span id="labelCount">0</span></div>
               <ul id="labelList" class="wall-list label-list"><li class="empty-list">Add text to see it here.</li></ul>
+              <div class="element-section-heading"><span>Shapes</span><span id="shapeCount">0</span></div>
+              <ul id="shapeList" class="wall-list"><li class="empty-list">Add a shape to see it here.</li></ul>
             </div>
           </section>
         </aside>

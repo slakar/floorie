@@ -664,14 +664,14 @@ async function apiRequest(url, options) {
   return payload;
 }
 
-async function saveServerPlan() {
+async function saveServerPlan({ saveAsNew = false } = {}) {
   const name = prompt('Plan name:', state.serverName || 'Untitled plan');
   if (!name || !name.trim()) return false;
   try {
-    $('#saveStatus').textContent = 'Saving to server…';
+    $('#saveStatus').textContent = saveAsNew ? 'Saving new plan…' : 'Saving to server…';
     const payload = await apiRequest('./api.php', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: state.serverId, name: name.trim().slice(0, 100), plan: projectData() }),
+      body: JSON.stringify({ id: saveAsNew ? null : state.serverId, name: name.trim().slice(0, 100), plan: projectData() }),
     });
     state.serverId = payload.id; state.serverName = payload.name; state.dirty = false; persist(); updateUi();
     $('#saveStatus').textContent = 'Saved'; return true;
@@ -772,6 +772,7 @@ $('#zoomIn').addEventListener('click', () => setZoom(state.zoom + .25)); $('#zoo
 $('#saveButton').addEventListener('click', downloadJson); $('#loadButton').addEventListener('click', () => $('#loadInput').click());
 $('#loadInput').addEventListener('change', (event) => event.target.files[0] && loadJson(event.target.files[0]));
 $('#serverSaveButton').addEventListener('click', saveServerPlan);
+$('#serverSaveNewButton').addEventListener('click', () => saveServerPlan({ saveAsNew: true }));
 $('#serverLoadButton').addEventListener('click', openServerPlans);
 $('#newProjectButton').addEventListener('click', requestNewProject);
 $('#cancelNewProject').addEventListener('click', () => $('#newProjectDialog').close());

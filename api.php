@@ -35,6 +35,16 @@ function valid_point($point): bool
         && array_key_exists('y', $point) && finite_number($point['y']);
 }
 
+function valid_color($value): bool
+{
+    return is_string($value) && (bool) preg_match('/^#[0-9a-fA-F]{6}$/', $value);
+}
+
+function valid_shade($value): bool
+{
+    return finite_number($value) && $value >= 0.2 && $value <= 1;
+}
+
 function validate_plan($plan): void
 {
     if (!is_array($plan) || !isset($plan['walls']) || !is_array($plan['walls'])) {
@@ -43,7 +53,9 @@ function validate_plan($plan): void
     if (count($plan['walls']) > MAX_WALLS) respond(422, ['error' => 'The plan contains too many walls.']);
     foreach ($plan['walls'] as $wall) {
         if (!is_array($wall) || !valid_point($wall['a'] ?? null) || !valid_point($wall['b'] ?? null)
-            || (isset($wall['thickness']) && (!finite_number($wall['thickness']) || $wall['thickness'] < 3 || $wall['thickness'] > 12))) {
+            || (isset($wall['thickness']) && (!finite_number($wall['thickness']) || $wall['thickness'] < 3 || $wall['thickness'] > 12))
+            || (isset($wall['color']) && !valid_color($wall['color']))
+            || (isset($wall['shade']) && !valid_shade($wall['shade']))) {
             respond(422, ['error' => 'The plan contains an invalid wall.']);
         }
     }
@@ -67,11 +79,13 @@ function validate_plan($plan): void
     if (!is_array($shapes) || count($shapes) > MAX_SHAPES) respond(422, ['error' => 'The plan contains invalid shapes.']);
     foreach ($shapes as $shape) {
         $type = is_array($shape) ? ($shape['type'] ?? '') : '';
-        $linear = $type === 'square' || $type === 'line';
+        $linear = $type === 'square' || $type === 'rectangle' || $type === 'line';
         $radial = $type === 'circle' || $type === 'semicircle';
         if ((!$linear && !$radial)
             || ($linear && (!valid_point($shape['a'] ?? null) || !valid_point($shape['b'] ?? null)))
-            || ($radial && (!valid_point($shape['center'] ?? null) || !isset($shape['radius']) || !finite_number($shape['radius']) || $shape['radius'] < 0))) {
+            || ($radial && (!valid_point($shape['center'] ?? null) || !isset($shape['radius']) || !finite_number($shape['radius']) || $shape['radius'] < 0))
+            || (isset($shape['color']) && !valid_color($shape['color']))
+            || (isset($shape['shade']) && !valid_shade($shape['shade']))) {
             respond(422, ['error' => 'The plan contains an invalid shape.']);
         }
     }

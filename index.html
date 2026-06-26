@@ -59,6 +59,7 @@
         </aside>
         <aside id="shapePalette" class="shape-palette" aria-label="Shape choices" hidden>
           <button class="shape-choice active" data-shape="square" title="Square"><span>□</span><small>Square</small></button>
+          <button class="shape-choice" data-shape="rectangle" title="Rectangle"><span>▭</span><small>Rect</small></button>
           <button class="shape-choice" data-shape="circle" title="Circle"><span>○</span><small>Circle</small></button>
           <button class="shape-choice" data-shape="line" title="Line"><span>╱</span><small>Line</small></button>
           <button class="shape-choice" data-shape="semicircle" title="Semi-circle"><span>◠</span><small>Half</small></button>
@@ -106,6 +107,28 @@
               <input id="wallWidth" type="range" min="3" max="12" value="6" disabled />
               <output id="wallWidthValue">—</output>
             </div>
+          </label>
+          <label class="field">
+            <span>Selected line color</span>
+            <div class="color-row">
+              <input id="lineColor" type="color" value="#30332d" disabled />
+              <output id="lineColorValue">—</output>
+            </div>
+          </label>
+          <label class="field">
+            <span>Selected line shade</span>
+            <div class="range-row">
+              <input id="lineShade" type="range" min="20" max="100" step="1" value="100" disabled />
+              <output id="lineShadeValue">—</output>
+            </div>
+          </label>
+          <label class="field">
+            <span id="elementLengthLabel">Selected length (ft)</span>
+            <input id="elementLength" class="number-input" type="number" min="0.1" step="0.1" disabled />
+          </label>
+          <label class="field">
+            <span id="elementHeightLabel">Selected height (ft)</span>
+            <input id="elementHeight" class="number-input" type="number" min="0.1" step="0.1" disabled />
           </label>
           <label id="textSizeField" class="field text-size-field">
             <span>Selected text size</span>

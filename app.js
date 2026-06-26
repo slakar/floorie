@@ -3,6 +3,9 @@ const ctx = canvas.getContext('2d');
 const shell = canvas.parentElement;
 const $ = (selector) => document.querySelector(selector);
 const gridPixels = (inches) => ({ 3: 20, 6: 25, 12: 32, 24: 44 })[inches] || 32;
+const DEFAULT_WALL_COLOR = '#30332d';
+const DEFAULT_SHAPE_COLOR = '#59615b';
+const COLOR_PATTERN = /^#[0-9a-f]{6}$/i;
 
 function readLocalProject() {
   try {
@@ -23,8 +26,8 @@ const state = {
   selectedLabel: null, draggingLabel: false, labelSnapshot: null, labelDragOffset: null, labelSizeSnapshot: null,
   drawingRuler: false, rulerStart: null, rulerPreview: null,
   selectedRuler: null, rulerDragMode: null, rulerDragSnapshot: null, rulerDragStart: null, rulerDragOriginal: null,
-  drawingShape: false, shapeStart: null, shapePreview: null, shapeKind: 'square',
-  wallSizeSnapshot: null,
+  drawingShape: false, shapeStart: null, shapePreview: null, shapeKind: 'square', selectedShape: null,
+  wallSizeSnapshot: null, lineStyleSnapshot: null,
   serverId: saved.server?.id || null, serverName: saved.server?.name || 'Untitled plan',
   dirty: saved.localState?.dirty === true,
   zoom: Number(saved.viewport?.zoom) || 1,
@@ -51,6 +54,12 @@ function markDirty() { state.dirty = true; }
 
 const snap = (value) => Math.round(value / state.grid) * state.grid;
 const samePoint = (a, b) => a.x === b.x && a.y === b.y;
+const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+const normalizeColor = (value, fallback) => typeof value === 'string' && COLOR_PATTERN.test(value) ? value.toLowerCase() : fallback;
+const normalizeShade = (value) => Number.isFinite(Number(value)) ? clamp(Number(value), .2, 1) : 1;
+const pixelsToInches = (pixels) => pixels / state.grid * state.gridInches;
+const feetToPixels = (feet) => feet * 12 / state.gridInches * state.grid;
+const trimNumber = (value, places = 2) => Number(value.toFixed(places)).toString();
 const screenPoint = (event) => {
   const rect = canvas.getBoundingClientRect();
   return { x: event.clientX - rect.left, y: event.clientY - rect.top };
@@ -63,17 +72,22 @@ const rawCanvasPoint = (event) => {
   const point = screenPoint(event);
   return { x: (point.x - state.offset.x) / state.zoom, y: (point.y - state.offset.y) / state.zoom };
 };
+const clampZoom = (value) => Math.max(.1, Math.min(2, value));
 
 function wallLengthInches(wall) {
   return Math.hypot(wall.b.x - wall.a.x, wall.b.y - wall.a.y) / state.grid * state.gridInches;
 }
 
 function formatLength(inches) {
-  const total = Math.max(0, Math.round(inches));
+  const rawTotal = Math.max(0, Number(inches) || 0);
+  if (Math.abs(rawTotal - Math.round(rawTotal)) > .01) return `${trimNumber(rawTotal / 12)} ft`;
+  const total = Math.round(rawTotal);
   const feet = Math.floor(total / 12), remainder = total % 12;
   if (!feet) return `${remainder} in`;
   return remainder ? `${feet} ft ${remainder} in` : `${feet} ft`;
 }
+
+function feetValueFromInches(inches) { return trimNumber((Number(inches) || 0) / 12); }
 
 function resize() {
   const { width, height } = shell.getBoundingClientRect();
@@ -101,7 +115,7 @@ function drawGrid(width, height) {
 function drawWall(wall, preview = false, selected = false) {
   ctx.save(); ctx.translate(state.offset.x, state.offset.y); ctx.scale(state.zoom, state.zoom);
   ctx.lineCap = 'square'; ctx.lineJoin = 'miter';
-  ctx.strokeStyle = preview || selected ? '#b54b2d' : '#30332d'; ctx.globalAlpha = preview ? .65 : 1;
+  ctx.strokeStyle = preview ? '#b54b2d' : normalizeColor(wall.color, DEFAULT_WALL_COLOR); ctx.globalAlpha = preview ? .65 : normalizeShade(wall.shade);
   ctx.lineWidth = Math.max(2, (wall.thickness || state.wallWidth) / state.gridInches * state.grid);
   ctx.beginPath(); ctx.moveTo(wall.a.x, wall.a.y); ctx.lineTo(wall.b.x, wall.b.y); ctx.stroke(); ctx.restore();
   if (preview) drawWallPreviewLength(wall);
@@ -200,20 +214,20 @@ function rulerPartAtEvent(event, ruler) {
 }
 
 function shapeFromDrag(type, start, end) {
-  if (type === 'line') return { type, a: { ...start }, b: { ...end } };
+  if (type === 'line' || type === 'rectangle') return { type, a: { ...start }, b: { ...end }, color: DEFAULT_SHAPE_COLOR, shade: 1 };
   if (type === 'square') {
     const size = Math.max(Math.abs(end.x - start.x), Math.abs(end.y - start.y));
-    return { type, a: { ...start }, b: { x: start.x + Math.sign(end.x - start.x || 1) * size, y: start.y + Math.sign(end.y - start.y || 1) * size } };
+    return { type, a: { ...start }, b: { x: start.x + Math.sign(end.x - start.x || 1) * size, y: start.y + Math.sign(end.y - start.y || 1) * size }, color: DEFAULT_SHAPE_COLOR, shade: 1 };
   }
-  return { type, center: { ...start }, radius: Math.hypot(end.x - start.x, end.y - start.y) };
+  return { type, center: { ...start }, radius: Math.hypot(end.x - start.x, end.y - start.y), color: DEFAULT_SHAPE_COLOR, shade: 1 };
 }
 
-function drawShape(shape, preview = false) {
+function drawShape(shape, preview = false, selected = false) {
   ctx.save(); ctx.translate(state.offset.x, state.offset.y); ctx.scale(state.zoom, state.zoom);
-  ctx.strokeStyle = preview ? '#b54b2d' : '#59615b'; ctx.globalAlpha = preview ? .7 : 1;
+  ctx.strokeStyle = preview ? '#b54b2d' : normalizeColor(shape.color, DEFAULT_SHAPE_COLOR); ctx.globalAlpha = preview ? .7 : normalizeShade(shape.shade);
   ctx.lineWidth = 2 / state.zoom; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.beginPath();
   if (shape.type === 'line') { ctx.moveTo(shape.a.x, shape.a.y); ctx.lineTo(shape.b.x, shape.b.y); }
-  else if (shape.type === 'square') {
+  else if (shape.type === 'square' || shape.type === 'rectangle') {
     const x = Math.min(shape.a.x, shape.b.x), y = Math.min(shape.a.y, shape.b.y);
     ctx.rect(x, y, Math.abs(shape.b.x - shape.a.x), Math.abs(shape.b.y - shape.a.y));
   } else if (shape.type === 'circle') ctx.arc(shape.center.x, shape.center.y, shape.radius, 0, Math.PI * 2);
@@ -221,14 +235,18 @@ function drawShape(shape, preview = false) {
     ctx.arc(shape.center.x, shape.center.y, shape.radius, Math.PI, Math.PI * 2);
     ctx.lineTo(shape.center.x - shape.radius, shape.center.y);
   }
-  ctx.stroke(); ctx.restore();
+  ctx.stroke();
+  if (selected && !preview) {
+    ctx.globalAlpha = 1; ctx.strokeStyle = '#b54b2d'; ctx.lineWidth = 1.5 / state.zoom; ctx.setLineDash([6 / state.zoom, 4 / state.zoom]); ctx.stroke();
+  }
+  ctx.restore();
 }
 
 function draw() {
   const width = canvas.width / state.dpr, height = canvas.height / state.dpr;
   ctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0); ctx.clearRect(0, 0, width, height);
   ctx.fillStyle = '#e7e3d8'; ctx.fillRect(0, 0, width, height); drawGrid(width, height);
-  state.shapes.forEach((shape) => drawShape(shape));
+  state.shapes.forEach((shape, index) => drawShape(shape, false, state.tool === 'shapes' && index === state.selectedShape));
   state.walls.forEach((wall, index) => drawWall(wall, false, state.tool === 'edit' && index === state.selectedWall));
   if (state.showText) state.labels.forEach((label, index) => drawLabel(label, state.tool === 'text' && index === state.selectedLabel));
   if (state.showDimensions) state.rulers.forEach((ruler, index) => drawRuler(ruler, false, state.tool === 'ruler' && index === state.selectedRuler));
@@ -240,10 +258,10 @@ function draw() {
 
 function projectData() {
   return {
-    format: 'gridline-floor-plan', version: 4, exportedAt: new Date().toISOString(),
+    format: 'gridline-floor-plan', version: 5, exportedAt: new Date().toISOString(),
     settings: { gridInches: state.gridInches, wallWidth: state.wallWidth, showText: state.showText, showDimensions: state.showDimensions },
     viewport: { zoom: state.zoom, offset: { ...state.offset } },
-    walls: state.walls.map((wall) => ({ a: { ...wall.a }, b: { ...wall.b }, thickness: wall.thickness || state.wallWidth })),
+    walls: state.walls.map((wall) => ({ a: { ...wall.a }, b: { ...wall.b }, thickness: wall.thickness || state.wallWidth, color: normalizeColor(wall.color, DEFAULT_WALL_COLOR), shade: normalizeShade(wall.shade) })),
     labels: state.labels.map((label) => ({ text: label.text, x: label.x, y: label.y, fontSize: label.fontSize || 16 })),
     rulers: state.rulers.map((ruler) => ({ a: { ...ruler.a }, b: { ...ruler.b }, ...(ruler.labelOffset ? { labelOffset: { ...ruler.labelOffset } } : {}) })),
     shapes: state.shapes.map((shape) => structuredClone(shape)),
@@ -286,7 +304,7 @@ function shapeAtPoint(point) {
   for (let i = state.shapes.length - 1; i >= 0; i -= 1) {
     const shape = state.shapes[i];
     if (shape.type === 'line' && pointToSegmentDistance(point, shape.a, shape.b) <= tolerance) return i;
-    if (shape.type === 'square') {
+    if (shape.type === 'square' || shape.type === 'rectangle') {
       const x1 = Math.min(shape.a.x, shape.b.x), x2 = Math.max(shape.a.x, shape.b.x);
       const y1 = Math.min(shape.a.y, shape.b.y), y2 = Math.max(shape.a.y, shape.b.y);
       const edges = [[{ x: x1, y: y1 }, { x: x2, y: y1 }], [{ x: x2, y: y1 }, { x: x2, y: y2 }], [{ x: x2, y: y2 }, { x: x1, y: y2 }], [{ x: x1, y: y2 }, { x: x1, y: y1 }]];
@@ -302,6 +320,73 @@ function shapeAtPoint(point) {
   return -1;
 }
 
+function shapeTypeLabel(shape) { return shape.type === 'semicircle' ? 'semi-circle' : shape.type; }
+
+function shapeSizeText(shape) {
+  if (shape.type === 'line') return formatLength(wallLengthInches(shape));
+  if (shape.type === 'square' || shape.type === 'rectangle') {
+    const width = formatLength(pixelsToInches(Math.abs(shape.b.x - shape.a.x)));
+    const height = formatLength(pixelsToInches(Math.abs(shape.b.y - shape.a.y)));
+    return `${width} × ${height}`;
+  }
+  if (shape.type === 'circle') return `dia ${formatLength(pixelsToInches(shape.radius * 2))}`;
+  return `dia ${formatLength(pixelsToInches(shape.radius * 2))}`;
+}
+
+function selectedLineElement() {
+  if (state.selectedWall !== null && state.walls[state.selectedWall]) return { kind: 'wall', index: state.selectedWall, item: state.walls[state.selectedWall], fallback: DEFAULT_WALL_COLOR };
+  if (state.selectedShape !== null && state.shapes[state.selectedShape]) return { kind: 'shape', index: state.selectedShape, item: state.shapes[state.selectedShape], fallback: DEFAULT_SHAPE_COLOR };
+  return null;
+}
+
+function setSegmentLength(segment, feet) {
+  const dx = segment.b.x - segment.a.x, dy = segment.b.y - segment.a.y, current = Math.hypot(dx, dy) || 1;
+  const length = feetToPixels(feet);
+  segment.b = { x: segment.a.x + dx / current * length, y: segment.a.y + dy / current * length };
+}
+
+function setAxisLength(shape, axis, feet) {
+  const length = feetToPixels(feet), delta = axis === 'x' ? shape.b.x - shape.a.x : shape.b.y - shape.a.y;
+  const sign = delta < 0 ? -1 : 1;
+  shape.b = { ...shape.b, [axis]: shape.a[axis] + sign * length };
+}
+
+function selectedSizeInfo() {
+  if (state.selectedWall !== null && state.walls[state.selectedWall]) {
+    return { lengthLabel: 'Selected wall length (ft)', length: feetValueFromInches(wallLengthInches(state.walls[state.selectedWall])) };
+  }
+  const shape = state.selectedShape !== null ? state.shapes[state.selectedShape] : null;
+  if (!shape) return null;
+  if (shape.type === 'line') return { lengthLabel: 'Selected line length (ft)', length: feetValueFromInches(wallLengthInches(shape)) };
+  if (shape.type === 'square') return { lengthLabel: 'Selected side length (ft)', length: feetValueFromInches(pixelsToInches(Math.abs(shape.b.x - shape.a.x))) };
+  if (shape.type === 'rectangle') return {
+    lengthLabel: 'Selected width (ft)', length: feetValueFromInches(pixelsToInches(Math.abs(shape.b.x - shape.a.x))),
+    heightLabel: 'Selected height (ft)', height: feetValueFromInches(pixelsToInches(Math.abs(shape.b.y - shape.a.y))),
+  };
+  return { lengthLabel: 'Selected diameter (ft)', length: feetValueFromInches(pixelsToInches(shape.radius * 2)) };
+}
+
+function applySelectedLength(feet) {
+  const value = Number(feet); if (!Number.isFinite(value) || value <= 0) return;
+  const snapshot = documentSnapshot();
+  if (state.selectedWall !== null && state.walls[state.selectedWall]) setSegmentLength(state.walls[state.selectedWall], value);
+  else if (state.selectedShape !== null && state.shapes[state.selectedShape]) {
+    const shape = state.shapes[state.selectedShape];
+    if (shape.type === 'line') setSegmentLength(shape, value);
+    else if (shape.type === 'square') { setAxisLength(shape, 'x', value); setAxisLength(shape, 'y', value); }
+    else if (shape.type === 'rectangle') setAxisLength(shape, 'x', value);
+    else shape.radius = feetToPixels(value) / 2;
+  } else return;
+  pushHistory(snapshot); markDirty(); persist(); updateUi(); draw();
+}
+
+function applySelectedHeight(feet) {
+  const value = Number(feet); if (!Number.isFinite(value) || value <= 0) return;
+  if (state.selectedShape === null || !state.shapes[state.selectedShape] || state.shapes[state.selectedShape].type !== 'rectangle') return;
+  const snapshot = documentSnapshot(); setAxisLength(state.shapes[state.selectedShape], 'y', value);
+  pushHistory(snapshot); markDirty(); persist(); updateUi(); draw();
+}
+
 function renderWallList() {
   const list = $('#wallList'); list.replaceChildren();
   if (!state.walls.length) {
@@ -311,7 +396,7 @@ function renderWallList() {
     const item = document.createElement('li'), name = document.createElement('span'), length = document.createElement('strong');
     name.textContent = `Line ${index + 1}`; length.textContent = formatLength(wallLengthInches(wall));
     item.append(name, length); list.append(item);
-    item.addEventListener('click', () => { setTool('edit'); state.selectedWall = index; updateUi(); draw(); });
+    item.addEventListener('click', () => { setTool('edit'); state.selectedWall = index; state.selectedShape = null; updateUi(); draw(); });
   });
   $('#totalLength').textContent = formatLength(state.walls.reduce((sum, wall) => sum + wallLengthInches(wall), 0));
 
@@ -341,7 +426,8 @@ function renderWallList() {
     const empty = document.createElement('li'); empty.className = 'empty-list'; empty.textContent = 'Add a shape to see it here.'; shapeList.append(empty);
   } else state.shapes.forEach((shape, index) => {
     const item = document.createElement('li'), name = document.createElement('span'), type = document.createElement('strong');
-    name.textContent = 'Shape ' + (index + 1); type.textContent = shape.type === 'semicircle' ? 'semi-circle' : shape.type; item.append(name, type); shapeList.append(item);
+    name.textContent = `${shapeTypeLabel(shape)} ${index + 1}`; type.textContent = shapeSizeText(shape); item.append(name, type); shapeList.append(item);
+    item.addEventListener('click', () => { setTool('shapes'); state.selectedShape = index; state.selectedWall = null; updateUi(); draw(); });
   });
   $('#shapeCount').textContent = String(state.shapes.length);
 }
@@ -357,6 +443,16 @@ function updateUi() {
   $('#wallWidth').disabled = !selectedWall;
   if (selectedWall) { $('#wallWidth').value = String(selectedWall.thickness || state.wallWidth); $('#wallWidthValue').textContent = (selectedWall.thickness || state.wallWidth) + ' in'; }
   else { $('#wallWidthValue').textContent = '—'; }
+  const selectedLine = selectedLineElement();
+  $('#lineColor').disabled = !selectedLine; $('#lineShade').disabled = !selectedLine;
+  if (selectedLine) {
+    const color = normalizeColor(selectedLine.item.color, selectedLine.fallback), shade = Math.round(normalizeShade(selectedLine.item.shade) * 100);
+    $('#lineColor').value = color; $('#lineColorValue').textContent = color; $('#lineShade').value = String(shade); $('#lineShadeValue').textContent = `${shade}%`;
+  } else { $('#lineColorValue').textContent = '—'; $('#lineShadeValue').textContent = '—'; }
+  const sizeInfo = selectedSizeInfo();
+  $('#elementLength').disabled = !sizeInfo; $('#elementHeight').disabled = !sizeInfo?.height;
+  $('#elementLengthLabel').textContent = sizeInfo?.lengthLabel || 'Selected length (ft)'; $('#elementLength').value = sizeInfo?.length || '';
+  $('#elementHeightLabel').textContent = sizeInfo?.heightLabel || 'Selected height (ft)'; $('#elementHeight').value = sizeInfo?.height || '';
   const selectedLabel = state.selectedLabel !== null ? state.labels[state.selectedLabel] : null;
   $('#labelSize').disabled = !selectedLabel;
   if (selectedLabel) { $('#labelSize').value = String(selectedLabel.fontSize || 16); $('#labelSizeValue').textContent = `${selectedLabel.fontSize || 16}px`; }
@@ -396,6 +492,9 @@ canvas.addEventListener('pointerdown', (event) => {
     canvas.setPointerCapture(event.pointerId); draw(); return;
   }
   if (state.tool === 'shapes') {
+    const raw = rawCanvasPoint(event), shapeIndex = shapeAtPoint(raw);
+    if (shapeIndex >= 0) { state.selectedShape = shapeIndex; state.selectedWall = null; updateUi(); draw(); return; }
+    state.selectedShape = null;
     state.drawingShape = true; state.shapeStart = point; state.shapePreview = shapeFromDrag(state.shapeKind, point, point);
     canvas.setPointerCapture(event.pointerId); draw(); return;
   }
@@ -427,6 +526,7 @@ canvas.addEventListener('pointerdown', (event) => {
         if (pointToSegmentDistance(rawPoint, state.walls[i].a, state.walls[i].b) < 18 / state.zoom) { index = i; break; }
       }
       state.selectedWall = index >= 0 ? index : null;
+      if (state.selectedWall !== null) state.selectedShape = null;
     }
     if (handle) {
       state.editingHandle = handle; state.editSnapshot = documentSnapshot();
@@ -451,7 +551,7 @@ canvas.addEventListener('pointerdown', (event) => {
     }
     if (index >= 0) commit(state.walls.filter((_, i) => i !== index)); return;
   }
-  state.drawing = true; state.start = point; state.preview = { a: point, b: point, thickness: state.wallWidth }; canvas.setPointerCapture(event.pointerId);
+  state.drawing = true; state.start = point; state.preview = { a: point, b: point, thickness: state.wallWidth, color: DEFAULT_WALL_COLOR, shade: 1 }; canvas.setPointerCapture(event.pointerId);
 });
 
 canvas.addEventListener('pointermove', (event) => {
@@ -509,7 +609,7 @@ canvas.addEventListener('pointermove', (event) => {
     const dx = Math.abs(point.x - state.start.x), dy = Math.abs(point.y - state.start.y);
     point = dx > dy ? { x: point.x, y: state.start.y } : { x: state.start.x, y: point.y };
   }
-  state.preview = { a: state.start, b: point, thickness: state.wallWidth }; draw();
+  state.preview = { a: state.start, b: point, thickness: state.wallWidth, color: DEFAULT_WALL_COLOR, shade: 1 }; draw();
 });
 
 function endPointer() {
@@ -568,10 +668,12 @@ function setTool(tool) {
   state.draggingLabel = false; state.labelSnapshot = null; state.labelDragOffset = null;
   state.labelSizeSnapshot = null;
   state.wallSizeSnapshot = null;
+  state.lineStyleSnapshot = null;
   state.rulerDragMode = null; state.rulerDragSnapshot = null; state.rulerDragStart = null; state.rulerDragOriginal = null;
   state.drawingRuler = false; state.rulerStart = null; state.rulerPreview = null;
   state.drawingShape = false; state.shapeStart = null; state.shapePreview = null;
   if (tool !== 'edit') state.selectedWall = null;
+  if (tool !== 'shapes') state.selectedShape = null;
   if (tool !== 'text') state.selectedLabel = null;
   if (tool !== 'ruler') state.selectedRuler = null;
   state.tool = tool;
@@ -590,11 +692,11 @@ function setTool(tool) {
 
 function undo() {
   if (!state.history.length) return; state.future.push(documentSnapshot());
-  restoreSnapshot(state.history.pop()); state.selectedWall = null; state.selectedLabel = null; state.selectedRuler = null; markDirty(); persist(); draw(); updateUi();
+  restoreSnapshot(state.history.pop()); state.selectedWall = null; state.selectedLabel = null; state.selectedRuler = null; state.selectedShape = null; markDirty(); persist(); draw(); updateUi();
 }
 function redo() {
   if (!state.future.length) return; state.history.push(documentSnapshot());
-  restoreSnapshot(state.future.pop()); state.selectedWall = null; state.selectedLabel = null; state.selectedRuler = null; markDirty(); persist(); draw(); updateUi();
+  restoreSnapshot(state.future.pop()); state.selectedWall = null; state.selectedLabel = null; state.selectedRuler = null; state.selectedShape = null; markDirty(); persist(); draw(); updateUi();
 }
 
 function downloadJson() {
@@ -613,14 +715,14 @@ function applyProject(project, options = {}) {
   if (project.rulers !== undefined && (!Array.isArray(project.rulers) || !project.rulers.every((ruler) => validPoint(ruler.a) && validPoint(ruler.b))))
     throw new Error('This plan contains invalid rulers.');
   if (project.shapes !== undefined && (!Array.isArray(project.shapes) || !project.shapes.every((shape) => {
-    if (!shape || !['square', 'circle', 'line', 'semicircle'].includes(shape.type)) return false;
-    return shape.type === 'square' || shape.type === 'line' ? validPoint(shape.a) && validPoint(shape.b) : validPoint(shape.center) && Number.isFinite(Number(shape.radius));
+    if (!shape || !['square', 'rectangle', 'circle', 'line', 'semicircle'].includes(shape.type)) return false;
+    return ['square', 'rectangle', 'line'].includes(shape.type) ? validPoint(shape.a) && validPoint(shape.b) : validPoint(shape.center) && Number.isFinite(Number(shape.radius));
   }))) throw new Error('This plan contains invalid shapes.');
   const legacyThickness = Number(project.settings?.wallWidth);
   state.walls = project.walls.map((wall) => {
     const thickness = Number(wall.thickness);
     const fallback = Number.isFinite(legacyThickness) ? Math.max(3, Math.min(12, legacyThickness)) : 6;
-    return { a: { x: Number(wall.a.x), y: Number(wall.a.y) }, b: { x: Number(wall.b.x), y: Number(wall.b.y) }, thickness: Number.isFinite(thickness) ? Math.max(3, Math.min(12, thickness)) : fallback };
+    return { a: { x: Number(wall.a.x), y: Number(wall.a.y) }, b: { x: Number(wall.b.x), y: Number(wall.b.y) }, thickness: Number.isFinite(thickness) ? Math.max(3, Math.min(12, thickness)) : fallback, color: normalizeColor(wall.color, DEFAULT_WALL_COLOR), shade: normalizeShade(wall.shade) };
   });
   state.labels = (project.labels || []).map((label) => {
     const size = Number(label.fontSize);
@@ -631,8 +733,9 @@ function applyProject(project, options = {}) {
     ...(validPoint(ruler.labelOffset) ? { labelOffset: { x: Number(ruler.labelOffset.x), y: Number(ruler.labelOffset.y) } } : {}),
   }));
   state.shapes = (project.shapes || []).map((shape) => {
-    if (shape.type === 'square' || shape.type === 'line') return { type: shape.type, a: { x: Number(shape.a.x), y: Number(shape.a.y) }, b: { x: Number(shape.b.x), y: Number(shape.b.y) } };
-    return { type: shape.type, center: { x: Number(shape.center.x), y: Number(shape.center.y) }, radius: Math.max(0, Number(shape.radius)) };
+    const style = { color: normalizeColor(shape.color, DEFAULT_SHAPE_COLOR), shade: normalizeShade(shape.shade) };
+    if (shape.type === 'square' || shape.type === 'rectangle' || shape.type === 'line') return { type: shape.type, a: { x: Number(shape.a.x), y: Number(shape.a.y) }, b: { x: Number(shape.b.x), y: Number(shape.b.y) }, ...style };
+    return { type: shape.type, center: { x: Number(shape.center.x), y: Number(shape.center.y) }, radius: Math.max(0, Number(shape.radius)), ...style };
   });
   if ([3, 6, 12, 24].includes(Number(project.settings?.gridInches))) state.gridInches = Number(project.settings.gridInches);
   if (Number(project.settings?.wallWidth) >= 3 && Number(project.settings?.wallWidth) <= 12) state.wallWidth = Number(project.settings.wallWidth);
@@ -644,7 +747,7 @@ function applyProject(project, options = {}) {
   state.serverId = fromServer ? options.serverId : null;
   state.serverName = fromServer ? (options.serverName || 'Untitled plan') : 'Untitled plan';
   state.dirty = false;
-  state.history = []; state.future = []; state.selectedWall = null; state.selectedLabel = null; state.selectedRuler = null;
+  state.history = []; state.future = []; state.selectedWall = null; state.selectedLabel = null; state.selectedRuler = null; state.selectedShape = null;
   persist(); updateUi(); draw();
 }
 
@@ -704,7 +807,7 @@ async function openServerPlans() {
 
 function resetProject() {
   state.walls = []; state.labels = []; state.rulers = []; state.shapes = []; state.history = []; state.future = [];
-  state.selectedWall = null; state.selectedLabel = null; state.selectedRuler = null; state.editingHandle = null; state.draggingLabel = false;
+  state.selectedWall = null; state.selectedLabel = null; state.selectedRuler = null; state.selectedShape = null; state.editingHandle = null; state.draggingLabel = false;
   state.start = null; state.preview = null; state.zoom = 1; state.offset = { x: 0, y: 0 };
   state.gridInches = 12; state.grid = gridPixels(12); state.wallWidth = 6;
   state.showText = true; state.showDimensions = true;
@@ -727,7 +830,7 @@ $('#undoButton').addEventListener('click', undo); $('#redoButton').addEventListe
 $('#centerButton').addEventListener('click', () => { if (state.offset.x || state.offset.y) markDirty(); state.offset = { x: 0, y: 0 }; persist(); draw(); });
 $('#clearButton').addEventListener('click', () => {
   if ((!state.walls.length && !state.labels.length && !state.rulers.length && !state.shapes.length) || !confirm('Clear the entire floor plan?')) return;
-  pushHistory(); state.walls = []; state.labels = []; state.rulers = []; state.shapes = []; state.selectedWall = null; state.selectedLabel = null; state.selectedRuler = null; markDirty(); persist(); updateUi(); draw();
+  pushHistory(); state.walls = []; state.labels = []; state.rulers = []; state.shapes = []; state.selectedWall = null; state.selectedLabel = null; state.selectedRuler = null; state.selectedShape = null; markDirty(); persist(); updateUi(); draw();
 });
 $('#wallWidth').addEventListener('input', (event) => {
   if (state.selectedWall === null || !state.walls[state.selectedWall]) return;
@@ -742,6 +845,27 @@ $('#wallWidth').addEventListener('change', () => {
   if (previous !== current) { pushHistory(state.wallSizeSnapshot); persist(); }
   state.wallSizeSnapshot = null; updateUi(); draw();
 });
+function commitLineStyleChange() {
+  if (!state.lineStyleSnapshot) return;
+  if (JSON.stringify(documentSnapshot()) !== JSON.stringify(state.lineStyleSnapshot)) { pushHistory(state.lineStyleSnapshot); persist(); }
+  state.lineStyleSnapshot = null; updateUi(); draw();
+}
+$('#lineColor').addEventListener('input', (event) => {
+  const selected = selectedLineElement(); if (!selected) return;
+  if (!state.lineStyleSnapshot) state.lineStyleSnapshot = documentSnapshot();
+  selected.item.color = normalizeColor(event.target.value, selected.fallback); markDirty();
+  $('#lineColorValue').textContent = selected.item.color; draw();
+});
+$('#lineColor').addEventListener('change', commitLineStyleChange);
+$('#lineShade').addEventListener('input', (event) => {
+  const selected = selectedLineElement(); if (!selected) return;
+  if (!state.lineStyleSnapshot) state.lineStyleSnapshot = documentSnapshot();
+  selected.item.shade = normalizeShade(Number(event.target.value) / 100); markDirty();
+  $('#lineShadeValue').textContent = `${Math.round(selected.item.shade * 100)}%`; draw();
+});
+$('#lineShade').addEventListener('change', commitLineStyleChange);
+$('#elementLength').addEventListener('change', (event) => applySelectedLength(event.target.value));
+$('#elementHeight').addEventListener('change', (event) => applySelectedHeight(event.target.value));
 $('#labelSize').addEventListener('input', (event) => {
   if (state.selectedLabel === null || !state.labels[state.selectedLabel]) return;
   if (!state.labelSizeSnapshot) state.labelSizeSnapshot = documentSnapshot();
@@ -765,7 +889,20 @@ $('#gridSize').addEventListener('change', (event) => {
   state.shapes = state.shapes.map((shape) => shape.a ? { ...shape, a: { x: shape.a.x * scale, y: shape.a.y * scale }, b: { x: shape.b.x * scale, y: shape.b.y * scale } } : { ...shape, center: { x: shape.center.x * scale, y: shape.center.y * scale }, radius: shape.radius * scale });
   markDirty(); persist(); updateUi(); draw();
 });
-function setZoom(value) { state.zoom = Math.max(.1, Math.min(2, value)); markDirty(); persist(); updateUi(); draw(); }
+function setZoom(value, anchor = null) {
+  const nextZoom = clampZoom(value);
+  if (nextZoom === state.zoom) return;
+  if (anchor) {
+    const worldPoint = { x: (anchor.x - state.offset.x) / state.zoom, y: (anchor.y - state.offset.y) / state.zoom };
+    state.offset = { x: anchor.x - worldPoint.x * nextZoom, y: anchor.y - worldPoint.y * nextZoom };
+  }
+  state.zoom = nextZoom; markDirty(); persist(); updateUi(); draw();
+}
+function handleWheelZoom(event) {
+  event.preventDefault();
+  const delta = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? window.innerHeight : 1);
+  setZoom(state.zoom * Math.exp(-delta * .001), screenPoint(event));
+}
 $('#showText').addEventListener('change', (event) => { state.showText = event.target.checked; markDirty(); persist(); draw(); });
 $('#showDimensions').addEventListener('change', (event) => { state.showDimensions = event.target.checked; markDirty(); persist(); draw(); });
 $('#zoomIn').addEventListener('click', () => setZoom(state.zoom + .25)); $('#zoomOut').addEventListener('click', () => setZoom(state.zoom - .25));
@@ -798,6 +935,7 @@ window.addEventListener('keydown', (event) => {
 window.addEventListener('keyup', (event) => { if (event.code === 'Space') { state.spacePressed = false; setCanvasCursor(); } });
 window.addEventListener('blur', () => { state.spacePressed = false; if (!state.panning) setCanvasCursor(); });
 window.addEventListener('beforeunload', (event) => { if (state.dirty) { event.preventDefault(); event.returnValue = ''; } });
+canvas.addEventListener('wheel', handleWheelZoom, { passive: false });
 canvas.addEventListener('contextmenu', (event) => event.preventDefault());
 new ResizeObserver(resize).observe(shell);
 updateUi(); resize(); setTool('wall'); persist();

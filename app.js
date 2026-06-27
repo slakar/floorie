@@ -6,6 +6,10 @@ const gridPixels = (inches) => ({ 3: 20, 6: 25, 12: 32, 24: 44 })[inches] || 32;
 const DEFAULT_WALL_COLOR = '#30332d';
 const DEFAULT_SHAPE_COLOR = '#59615b';
 const COLOR_PATTERN = /^#[0-9a-f]{6}$/i;
+const OBJECT_DEFS = {
+  car: { label: 'Car', src: './assets/car.svg', widthFt: 15, heightFt: 6 },
+  person: { label: 'Person', src: './assets/person.svg', widthFt: 2, heightFt: 2 },
+};
 
 function readLocalProject() {
   try {
@@ -20,13 +24,15 @@ function readLocalProject() {
 
 const saved = readLocalProject();
 const state = {
-  walls: saved.walls || [], labels: saved.labels || [], rulers: saved.rulers || [], shapes: saved.shapes || [], history: [], future: [], tool: 'wall',
+  walls: saved.walls || [], labels: saved.labels || [], rulers: saved.rulers || [], shapes: saved.shapes || [], objects: saved.objects || [], history: [], future: [], tool: 'wall',
   drawing: false, panning: false, start: null, preview: null, panPointer: null, spacePressed: false,
   selectedWall: null, editingHandle: null, editSnapshot: null,
   selectedLabel: null, draggingLabel: false, labelSnapshot: null, labelDragOffset: null, labelSizeSnapshot: null,
   drawingRuler: false, rulerStart: null, rulerPreview: null,
   selectedRuler: null, rulerDragMode: null, rulerDragSnapshot: null, rulerDragStart: null, rulerDragOriginal: null,
   drawingShape: false, shapeStart: null, shapePreview: null, shapeKind: 'square', selectedShape: null,
+  shapeDragMode: null, shapeDragSnapshot: null, shapeDragStart: null, shapeDragOriginal: null,
+  objectKind: 'car', selectedObject: null, objectDragMode: null, objectDragSnapshot: null, objectDragStart: null, objectDragOriginal: null,
   wallSizeSnapshot: null, lineStyleSnapshot: null,
   serverId: saved.server?.id || null, serverName: saved.server?.name || 'Untitled plan',
   dirty: saved.localState?.dirty === true,
@@ -39,12 +45,17 @@ const state = {
 };
 state.grid = gridPixels(state.gridInches);
 
-const documentSnapshot = () => structuredClone({ walls: state.walls, labels: state.labels, rulers: state.rulers, shapes: state.shapes });
+const objectImages = Object.fromEntries(Object.entries(OBJECT_DEFS).map(([key, def]) => {
+  const image = new Image(); image.onload = () => draw(); image.src = def.src; return [key, image];
+}));
+
+const documentSnapshot = () => structuredClone({ walls: state.walls, labels: state.labels, rulers: state.rulers, shapes: state.shapes, objects: state.objects });
 function restoreSnapshot(snapshot) {
   state.walls = structuredClone(snapshot.walls || []);
   state.labels = structuredClone(snapshot.labels || []);
   state.rulers = structuredClone(snapshot.rulers || []);
   state.shapes = structuredClone(snapshot.shapes || []);
+  state.objects = structuredClone(snapshot.objects || []);
 }
 function pushHistory(snapshot = documentSnapshot()) {
   state.history.push(snapshot); if (state.history.length > 100) state.history.shift();
@@ -242,29 +253,132 @@ function drawShape(shape, preview = false, selected = false) {
   ctx.restore();
 }
 
+function screenFromWorld(point) { return { x: state.offset.x + point.x * state.zoom, y: state.offset.y + point.y * state.zoom }; }
+
+function drawScreenHandle(point) {
+  const screen = screenFromWorld(point);
+  ctx.save(); ctx.beginPath(); ctx.arc(screen.x, screen.y, 6, 0, Math.PI * 2);
+  ctx.fillStyle = '#fffdf8'; ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = '#b54b2d'; ctx.stroke(); ctx.restore();
+}
+
+function radialHandle(shape) { return { x: shape.center.x + shape.radius, y: shape.center.y }; }
+
+function drawShapeHandles(shape) {
+  if (shape.type === 'line' || shape.type === 'square' || shape.type === 'rectangle') [shape.a, shape.b].forEach(drawScreenHandle);
+  else { drawScreenHandle(shape.center); drawScreenHandle(radialHandle(shape)); }
+}
+
+function moveShape(shape, dx, dy) {
+  if (shape.a) { shape.a = { x: shape.a.x + dx, y: shape.a.y + dy }; shape.b = { x: shape.b.x + dx, y: shape.b.y + dy }; }
+  else shape.center = { x: shape.center.x + dx, y: shape.center.y + dy };
+}
+
+function shapePartAtEvent(event, shape) {
+  const raw = rawCanvasPoint(event), near = (point) => Math.hypot(raw.x - point.x, raw.y - point.y) <= 12 / state.zoom;
+  if (shape.type === 'line' || shape.type === 'square' || shape.type === 'rectangle') {
+    if (near(shape.a)) return 'a'; if (near(shape.b)) return 'b';
+  } else {
+    if (near(radialHandle(shape))) return 'radius'; if (near(shape.center)) return 'body';
+  }
+  return shapeContainsPoint(shape, raw) ? 'body' : null;
+}
+
+function updateShapeDrag(event) {
+  const shape = state.shapes[state.selectedShape], point = canvasPoint(event);
+  if (!shape) return;
+  if (state.shapeDragMode === 'body') {
+    const dx = point.x - state.shapeDragStart.x, dy = point.y - state.shapeDragStart.y;
+    Object.assign(shape, structuredClone(state.shapeDragOriginal)); moveShape(shape, dx, dy); return;
+  }
+  if (shape.type === 'circle' || shape.type === 'semicircle') {
+    shape.radius = Math.max(1, Math.hypot(point.x - shape.center.x, point.y - shape.center.y)); return;
+  }
+  if (shape.type === 'square') {
+    const anchor = state.shapeDragMode === 'a' ? state.shapeDragOriginal.b : state.shapeDragOriginal.a;
+    const style = { color: shape.color, shade: shape.shade };
+    Object.assign(shape, { ...shapeFromDrag('square', anchor, point), ...style }); return;
+  }
+  shape[state.shapeDragMode] = point;
+}
+
+function createObject(symbol, center) {
+  const def = OBJECT_DEFS[symbol] || OBJECT_DEFS.car;
+  return { symbol, x: center.x, y: center.y, width: feetToPixels(def.widthFt), height: feetToPixels(def.heightFt) };
+}
+
+function objectBounds(object) {
+  return { x1: object.x - object.width / 2, y1: object.y - object.height / 2, x2: object.x + object.width / 2, y2: object.y + object.height / 2 };
+}
+
+function objectAtPoint(point) {
+  for (let i = state.objects.length - 1; i >= 0; i -= 1) {
+    const bounds = objectBounds(state.objects[i]);
+    if (point.x >= bounds.x1 && point.x <= bounds.x2 && point.y >= bounds.y1 && point.y <= bounds.y2) return i;
+  }
+  return -1;
+}
+
+function objectPartAtEvent(event, object) {
+  const raw = rawCanvasPoint(event), bounds = objectBounds(object), handle = { x: bounds.x2, y: bounds.y2 };
+  if (Math.hypot(raw.x - handle.x, raw.y - handle.y) <= 12 / state.zoom) return 'resize';
+  return raw.x >= bounds.x1 && raw.x <= bounds.x2 && raw.y >= bounds.y1 && raw.y <= bounds.y2 ? 'body' : null;
+}
+
+function drawObject(object, selected = false) {
+  const bounds = objectBounds(object), image = objectImages[object.symbol], def = OBJECT_DEFS[object.symbol] || OBJECT_DEFS.car;
+  ctx.save(); ctx.translate(state.offset.x, state.offset.y); ctx.scale(state.zoom, state.zoom);
+  if (image?.complete && image.naturalWidth) ctx.drawImage(image, bounds.x1, bounds.y1, object.width, object.height);
+  else {
+    ctx.fillStyle = 'rgba(247,244,236,.8)'; ctx.strokeStyle = '#59615b'; ctx.lineWidth = 2 / state.zoom;
+    ctx.fillRect(bounds.x1, bounds.y1, object.width, object.height); ctx.strokeRect(bounds.x1, bounds.y1, object.width, object.height);
+    ctx.fillStyle = '#292b26'; ctx.font = `${12 / state.zoom}px "DM Sans", sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(def.label, object.x, object.y);
+  }
+  if (selected) { ctx.strokeStyle = '#b54b2d'; ctx.lineWidth = 1.5 / state.zoom; ctx.setLineDash([6 / state.zoom, 4 / state.zoom]); ctx.strokeRect(bounds.x1, bounds.y1, object.width, object.height); }
+  ctx.restore();
+  if (selected) drawScreenHandle({ x: bounds.x2, y: bounds.y2 });
+}
+
+function objectSizeText(object) { return `${formatLength(pixelsToInches(object.width))} × ${formatLength(pixelsToInches(object.height))}`; }
+
+function updateObjectDrag(event) {
+  const object = state.objects[state.selectedObject]; if (!object) return;
+  if (state.objectDragMode === 'body') {
+    const point = canvasPoint(event), dx = point.x - state.objectDragStart.x, dy = point.y - state.objectDragStart.y;
+    object.x = state.objectDragOriginal.x + dx; object.y = state.objectDragOriginal.y + dy; return;
+  }
+  const raw = rawCanvasPoint(event), minSize = feetToPixels(.5), aspect = state.objectDragOriginal.width / state.objectDragOriginal.height;
+  let width = Math.max(minSize, Math.abs(raw.x - state.objectDragOriginal.x) * 2);
+  let height = Math.max(minSize, Math.abs(raw.y - state.objectDragOriginal.y) * 2);
+  if (event.shiftKey) { if (width / height > aspect) height = width / aspect; else width = height * aspect; }
+  object.width = width; object.height = height;
+}
+
 function draw() {
   const width = canvas.width / state.dpr, height = canvas.height / state.dpr;
   ctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0); ctx.clearRect(0, 0, width, height);
   ctx.fillStyle = '#e7e3d8'; ctx.fillRect(0, 0, width, height); drawGrid(width, height);
   state.shapes.forEach((shape, index) => drawShape(shape, false, state.tool === 'shapes' && index === state.selectedShape));
+  state.objects.forEach((object, index) => drawObject(object, state.tool === 'objects' && index === state.selectedObject));
   state.walls.forEach((wall, index) => drawWall(wall, false, state.tool === 'edit' && index === state.selectedWall));
   if (state.showText) state.labels.forEach((label, index) => drawLabel(label, state.tool === 'text' && index === state.selectedLabel));
   if (state.showDimensions) state.rulers.forEach((ruler, index) => drawRuler(ruler, false, state.tool === 'ruler' && index === state.selectedRuler));
   if (state.preview) drawWall(state.preview, true);
   if (state.rulerPreview) drawRuler(state.rulerPreview, true);
   if (state.shapePreview) drawShape(state.shapePreview, true);
+  if (state.tool === 'shapes' && state.selectedShape !== null && state.shapes[state.selectedShape]) drawShapeHandles(state.shapes[state.selectedShape]);
   if (state.tool === 'edit' && state.selectedWall !== null && state.walls[state.selectedWall]) drawEditHandles(state.walls[state.selectedWall]);
 }
 
 function projectData() {
   return {
-    format: 'gridline-floor-plan', version: 5, exportedAt: new Date().toISOString(),
+    format: 'gridline-floor-plan', version: 6, exportedAt: new Date().toISOString(),
     settings: { gridInches: state.gridInches, wallWidth: state.wallWidth, showText: state.showText, showDimensions: state.showDimensions },
     viewport: { zoom: state.zoom, offset: { ...state.offset } },
     walls: state.walls.map((wall) => ({ a: { ...wall.a }, b: { ...wall.b }, thickness: wall.thickness || state.wallWidth, color: normalizeColor(wall.color, DEFAULT_WALL_COLOR), shade: normalizeShade(wall.shade) })),
     labels: state.labels.map((label) => ({ text: label.text, x: label.x, y: label.y, fontSize: label.fontSize || 16 })),
     rulers: state.rulers.map((ruler) => ({ a: { ...ruler.a }, b: { ...ruler.b }, ...(ruler.labelOffset ? { labelOffset: { ...ruler.labelOffset } } : {}) })),
     shapes: state.shapes.map((shape) => structuredClone(shape)),
+    objects: state.objects.map((object) => ({ symbol: object.symbol, x: object.x, y: object.y, width: object.width, height: object.height })),
     server: state.serverId ? { id: state.serverId, name: state.serverName } : null,
   };
 }
@@ -293,6 +407,10 @@ function commitShapes(nextShapes) {
   pushHistory(); state.shapes = nextShapes; markDirty(); persist(); draw(); updateUi();
 }
 
+function commitObjects(nextObjects) {
+  pushHistory(); state.objects = nextObjects; markDirty(); persist(); draw(); updateUi();
+}
+
 function pointToSegmentDistance(p, a, b) {
   const dx = b.x - a.x, dy = b.y - a.y, lengthSq = dx * dx + dy * dy;
   const t = lengthSq ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / lengthSq)) : 0;
@@ -318,6 +436,18 @@ function shapeAtPoint(point) {
     }
   }
   return -1;
+}
+
+function shapeContainsPoint(shape, point) {
+  const tolerance = 10 / state.zoom;
+  if (shape.type === 'line') return pointToSegmentDistance(point, shape.a, shape.b) <= tolerance;
+  if (shape.type === 'square' || shape.type === 'rectangle') {
+    const x1 = Math.min(shape.a.x, shape.b.x), x2 = Math.max(shape.a.x, shape.b.x);
+    const y1 = Math.min(shape.a.y, shape.b.y), y2 = Math.max(shape.a.y, shape.b.y);
+    return point.x >= x1 - tolerance && point.x <= x2 + tolerance && point.y >= y1 - tolerance && point.y <= y2 + tolerance;
+  }
+  if (shape.type === 'circle') return Math.hypot(point.x - shape.center.x, point.y - shape.center.y) <= shape.radius + tolerance;
+  return point.y <= shape.center.y + tolerance && point.x >= shape.center.x - shape.radius - tolerance && point.x <= shape.center.x + shape.radius + tolerance && point.y >= shape.center.y - shape.radius - tolerance;
 }
 
 function shapeTypeLabel(shape) { return shape.type === 'semicircle' ? 'semi-circle' : shape.type; }
@@ -355,6 +485,11 @@ function selectedSizeInfo() {
   if (state.selectedWall !== null && state.walls[state.selectedWall]) {
     return { lengthLabel: 'Selected wall length (ft)', length: feetValueFromInches(wallLengthInches(state.walls[state.selectedWall])) };
   }
+  const object = state.selectedObject !== null ? state.objects[state.selectedObject] : null;
+  if (object) return {
+    lengthLabel: 'Selected object width (ft)', length: feetValueFromInches(pixelsToInches(object.width)),
+    heightLabel: 'Selected object height (ft)', height: feetValueFromInches(pixelsToInches(object.height)),
+  };
   const shape = state.selectedShape !== null ? state.shapes[state.selectedShape] : null;
   if (!shape) return null;
   if (shape.type === 'line') return { lengthLabel: 'Selected line length (ft)', length: feetValueFromInches(wallLengthInches(shape)) };
@@ -370,6 +505,7 @@ function applySelectedLength(feet) {
   const value = Number(feet); if (!Number.isFinite(value) || value <= 0) return;
   const snapshot = documentSnapshot();
   if (state.selectedWall !== null && state.walls[state.selectedWall]) setSegmentLength(state.walls[state.selectedWall], value);
+  else if (state.selectedObject !== null && state.objects[state.selectedObject]) state.objects[state.selectedObject].width = feetToPixels(value);
   else if (state.selectedShape !== null && state.shapes[state.selectedShape]) {
     const shape = state.shapes[state.selectedShape];
     if (shape.type === 'line') setSegmentLength(shape, value);
@@ -382,6 +518,10 @@ function applySelectedLength(feet) {
 
 function applySelectedHeight(feet) {
   const value = Number(feet); if (!Number.isFinite(value) || value <= 0) return;
+  if (state.selectedObject !== null && state.objects[state.selectedObject]) {
+    const snapshot = documentSnapshot(); state.objects[state.selectedObject].height = feetToPixels(value);
+    pushHistory(snapshot); markDirty(); persist(); updateUi(); draw(); return;
+  }
   if (state.selectedShape === null || !state.shapes[state.selectedShape] || state.shapes[state.selectedShape].type !== 'rectangle') return;
   const snapshot = documentSnapshot(); setAxisLength(state.shapes[state.selectedShape], 'y', value);
   pushHistory(snapshot); markDirty(); persist(); updateUi(); draw();
@@ -396,7 +536,7 @@ function renderWallList() {
     const item = document.createElement('li'), name = document.createElement('span'), length = document.createElement('strong');
     name.textContent = `Line ${index + 1}`; length.textContent = formatLength(wallLengthInches(wall));
     item.append(name, length); list.append(item);
-    item.addEventListener('click', () => { setTool('edit'); state.selectedWall = index; state.selectedShape = null; updateUi(); draw(); });
+    item.addEventListener('click', () => { setTool('edit'); state.selectedWall = index; state.selectedShape = null; state.selectedObject = null; updateUi(); draw(); });
   });
   $('#totalLength').textContent = formatLength(state.walls.reduce((sum, wall) => sum + wallLengthInches(wall), 0));
 
@@ -427,9 +567,19 @@ function renderWallList() {
   } else state.shapes.forEach((shape, index) => {
     const item = document.createElement('li'), name = document.createElement('span'), type = document.createElement('strong');
     name.textContent = `${shapeTypeLabel(shape)} ${index + 1}`; type.textContent = shapeSizeText(shape); item.append(name, type); shapeList.append(item);
-    item.addEventListener('click', () => { setTool('shapes'); state.selectedShape = index; state.selectedWall = null; updateUi(); draw(); });
+    item.addEventListener('click', () => { setTool('shapes'); state.selectedShape = index; state.selectedWall = null; state.selectedObject = null; updateUi(); draw(); });
   });
   $('#shapeCount').textContent = String(state.shapes.length);
+
+  const objectList = $('#objectList'); objectList.replaceChildren();
+  if (!state.objects.length) {
+    const empty = document.createElement('li'); empty.className = 'empty-list'; empty.textContent = 'Add a car or person to see it here.'; objectList.append(empty);
+  } else state.objects.forEach((object, index) => {
+    const item = document.createElement('li'), name = document.createElement('span'), size = document.createElement('strong');
+    name.textContent = `${OBJECT_DEFS[object.symbol]?.label || object.symbol} ${index + 1}`; size.textContent = objectSizeText(object); item.append(name, size); objectList.append(item);
+    item.addEventListener('click', () => { setTool('objects'); state.selectedObject = index; state.selectedShape = null; state.selectedWall = null; updateUi(); draw(); });
+  });
+  $('#objectCount').textContent = String(state.objects.length);
 }
 
 function updateUi() {
@@ -461,7 +611,7 @@ function updateUi() {
 }
 
 function setCanvasCursor() {
-  canvas.style.cursor = state.panning || state.editingHandle || state.draggingLabel || state.rulerDragMode ? 'grabbing' : state.spacePressed || state.tool === 'pan' ? 'grab' : ['wall', 'ruler', 'shapes'].includes(state.tool) ? 'crosshair' : state.tool === 'edit' || state.tool === 'text' ? 'pointer' : 'cell';
+  canvas.style.cursor = state.panning || state.editingHandle || state.draggingLabel || state.rulerDragMode || state.shapeDragMode || state.objectDragMode ? 'grabbing' : state.spacePressed || state.tool === 'pan' ? 'grab' : ['wall', 'ruler', 'shapes', 'objects'].includes(state.tool) ? 'crosshair' : state.tool === 'edit' || state.tool === 'text' ? 'pointer' : 'cell';
 }
 
 function beginPan(event) {
@@ -492,11 +642,30 @@ canvas.addEventListener('pointerdown', (event) => {
     canvas.setPointerCapture(event.pointerId); draw(); return;
   }
   if (state.tool === 'shapes') {
-    const raw = rawCanvasPoint(event), shapeIndex = shapeAtPoint(raw);
-    if (shapeIndex >= 0) { state.selectedShape = shapeIndex; state.selectedWall = null; updateUi(); draw(); return; }
+    let index = state.selectedShape, part = index !== null && state.shapes[index] ? shapePartAtEvent(event, state.shapes[index]) : null;
+    if (!part) {
+      index = -1;
+      for (let i = state.shapes.length - 1; i >= 0; i -= 1) { part = shapePartAtEvent(event, state.shapes[i]); if (part) { index = i; break; } }
+    }
+    if (part && index >= 0) {
+      state.selectedShape = index; state.selectedWall = null; state.selectedObject = null; state.shapeDragMode = part; state.shapeDragSnapshot = documentSnapshot();
+      state.shapeDragStart = canvasPoint(event); state.shapeDragOriginal = structuredClone(state.shapes[index]);
+      canvas.setPointerCapture(event.pointerId); setCanvasCursor(); updateUi(); draw(); return;
+    }
     state.selectedShape = null;
     state.drawingShape = true; state.shapeStart = point; state.shapePreview = shapeFromDrag(state.shapeKind, point, point);
     canvas.setPointerCapture(event.pointerId); draw(); return;
+  }
+  if (state.tool === 'objects') {
+    let index = state.selectedObject, part = index !== null && state.objects[index] ? objectPartAtEvent(event, state.objects[index]) : null;
+    if (!part) { index = objectAtPoint(rawCanvasPoint(event)); part = index >= 0 ? objectPartAtEvent(event, state.objects[index]) : null; }
+    if (part && index >= 0) {
+      state.selectedObject = index; state.selectedShape = null; state.selectedWall = null; state.objectDragMode = part; state.objectDragSnapshot = documentSnapshot();
+      state.objectDragStart = canvasPoint(event); state.objectDragOriginal = structuredClone(state.objects[index]);
+      canvas.setPointerCapture(event.pointerId); setCanvasCursor(); updateUi(); draw(); return;
+    }
+    const snapshot = documentSnapshot(); state.objects.push(createObject(state.objectKind, point)); state.selectedObject = state.objects.length - 1; state.selectedShape = null; state.selectedWall = null;
+    pushHistory(snapshot); markDirty(); persist(); updateUi(); draw(); return;
   }
   if (state.tool === 'text') {
     const rawPoint = rawCanvasPoint(event), index = labelAtPoint(rawPoint);
@@ -543,6 +712,8 @@ canvas.addEventListener('pointerdown', (event) => {
       if (pointToSegmentDistance(raw, state.rulers[i].a, state.rulers[i].b) < 12 / state.zoom) { rulerIndex = i; break; }
     }
     if (rulerIndex >= 0) { commitRulers(state.rulers.filter((_, i) => i !== rulerIndex)); return; }
+    const objectIndex = objectAtPoint(raw);
+    if (objectIndex >= 0) { commitObjects(state.objects.filter((_, i) => i !== objectIndex)); return; }
     const shapeIndex = shapeAtPoint(raw);
     if (shapeIndex >= 0) { commitShapes(state.shapes.filter((_, i) => i !== shapeIndex)); return; }
     let index = -1;
@@ -579,6 +750,8 @@ canvas.addEventListener('pointermove', (event) => {
     }
     renderWallList(); draw(); return;
   }
+  if (state.shapeDragMode && state.selectedShape !== null) { updateShapeDrag(event); renderWallList(); draw(); return; }
+  if (state.objectDragMode && state.selectedObject !== null) { updateObjectDrag(event); renderWallList(); draw(); return; }
   if (state.drawingRuler) {
     let point = canvasPoint(event);
     if (event.shiftKey) {
@@ -619,6 +792,16 @@ function endPointer() {
       pushHistory(state.rulerDragSnapshot); markDirty(); persist();
     }
     state.rulerDragMode = null; state.rulerDragSnapshot = null; state.rulerDragStart = null; state.rulerDragOriginal = null;
+    updateUi(); draw(); setCanvasCursor(); return;
+  }
+  if (state.shapeDragMode && state.selectedShape !== null) {
+    if (JSON.stringify(state.shapes) !== JSON.stringify(state.shapeDragSnapshot.shapes)) { pushHistory(state.shapeDragSnapshot); markDirty(); persist(); }
+    state.shapeDragMode = null; state.shapeDragSnapshot = null; state.shapeDragStart = null; state.shapeDragOriginal = null;
+    updateUi(); draw(); setCanvasCursor(); return;
+  }
+  if (state.objectDragMode && state.selectedObject !== null) {
+    if (JSON.stringify(state.objects) !== JSON.stringify(state.objectDragSnapshot.objects)) { pushHistory(state.objectDragSnapshot); markDirty(); persist(); }
+    state.objectDragMode = null; state.objectDragSnapshot = null; state.objectDragStart = null; state.objectDragOriginal = null;
     updateUi(); draw(); setCanvasCursor(); return;
   }
   if (state.drawingRuler) {
@@ -672,18 +855,23 @@ function setTool(tool) {
   state.rulerDragMode = null; state.rulerDragSnapshot = null; state.rulerDragStart = null; state.rulerDragOriginal = null;
   state.drawingRuler = false; state.rulerStart = null; state.rulerPreview = null;
   state.drawingShape = false; state.shapeStart = null; state.shapePreview = null;
+  state.shapeDragMode = null; state.shapeDragSnapshot = null; state.shapeDragStart = null; state.shapeDragOriginal = null;
+  state.objectDragMode = null; state.objectDragSnapshot = null; state.objectDragStart = null; state.objectDragOriginal = null;
   if (tool !== 'edit') state.selectedWall = null;
   if (tool !== 'shapes') state.selectedShape = null;
+  if (tool !== 'objects') state.selectedObject = null;
   if (tool !== 'text') state.selectedLabel = null;
   if (tool !== 'ruler') state.selectedRuler = null;
   state.tool = tool;
   $('#shapePalette').hidden = tool !== 'shapes';
+  $('#objectPalette').hidden = tool !== 'objects';
   document.querySelectorAll('[data-tool]').forEach((button) => button.classList.toggle('active', button.dataset.tool === tool));
   const content = {
     wall: ['Wall tool', 'Drag between grid points · Hold Shift for a straight wall'],
     edit: ['Edit tool', 'Select a wall, then drag either endpoint'],
     ruler: ['Ruler tool', 'Drag to measure; select and drag a line, endpoint, or label'],
-    shapes: ['Shapes tool', 'Choose a shape, then drag on the canvas'],
+    shapes: ['Shapes tool', 'Choose a shape, then drag on the canvas; selected shapes can be moved or resized'],
+    objects: ['Objects tool', 'Choose a car or person; click to insert, then drag to move or resize'],
     text: ['Text tool', 'Click to add · Drag to move · Double-click to edit'],
     erase: ['Erase tool', 'Click a wall to remove it'], pan: ['Pan tool', 'Drag to move the grid and plan'],
   }[tool];
@@ -692,11 +880,11 @@ function setTool(tool) {
 
 function undo() {
   if (!state.history.length) return; state.future.push(documentSnapshot());
-  restoreSnapshot(state.history.pop()); state.selectedWall = null; state.selectedLabel = null; state.selectedRuler = null; state.selectedShape = null; markDirty(); persist(); draw(); updateUi();
+  restoreSnapshot(state.history.pop()); state.selectedWall = null; state.selectedLabel = null; state.selectedRuler = null; state.selectedShape = null; state.selectedObject = null; markDirty(); persist(); draw(); updateUi();
 }
 function redo() {
   if (!state.future.length) return; state.history.push(documentSnapshot());
-  restoreSnapshot(state.future.pop()); state.selectedWall = null; state.selectedLabel = null; state.selectedRuler = null; state.selectedShape = null; markDirty(); persist(); draw(); updateUi();
+  restoreSnapshot(state.future.pop()); state.selectedWall = null; state.selectedLabel = null; state.selectedRuler = null; state.selectedShape = null; state.selectedObject = null; markDirty(); persist(); draw(); updateUi();
 }
 
 function downloadJson() {
@@ -718,6 +906,8 @@ function applyProject(project, options = {}) {
     if (!shape || !['square', 'rectangle', 'circle', 'line', 'semicircle'].includes(shape.type)) return false;
     return ['square', 'rectangle', 'line'].includes(shape.type) ? validPoint(shape.a) && validPoint(shape.b) : validPoint(shape.center) && Number.isFinite(Number(shape.radius));
   }))) throw new Error('This plan contains invalid shapes.');
+  if (project.objects !== undefined && (!Array.isArray(project.objects) || !project.objects.every((object) =>
+    object && Object.prototype.hasOwnProperty.call(OBJECT_DEFS, object.symbol) && validPoint(object) && Number(object.width) > 0 && Number(object.height) > 0))) throw new Error('This plan contains invalid objects.');
   const legacyThickness = Number(project.settings?.wallWidth);
   state.walls = project.walls.map((wall) => {
     const thickness = Number(wall.thickness);
@@ -737,6 +927,7 @@ function applyProject(project, options = {}) {
     if (shape.type === 'square' || shape.type === 'rectangle' || shape.type === 'line') return { type: shape.type, a: { x: Number(shape.a.x), y: Number(shape.a.y) }, b: { x: Number(shape.b.x), y: Number(shape.b.y) }, ...style };
     return { type: shape.type, center: { x: Number(shape.center.x), y: Number(shape.center.y) }, radius: Math.max(0, Number(shape.radius)), ...style };
   });
+  state.objects = (project.objects || []).map((object) => ({ symbol: object.symbol, x: Number(object.x), y: Number(object.y), width: Math.max(1, Number(object.width)), height: Math.max(1, Number(object.height)) }));
   if ([3, 6, 12, 24].includes(Number(project.settings?.gridInches))) state.gridInches = Number(project.settings.gridInches);
   if (Number(project.settings?.wallWidth) >= 3 && Number(project.settings?.wallWidth) <= 12) state.wallWidth = Number(project.settings.wallWidth);
   state.showText = project.settings?.showText !== false; state.showDimensions = project.settings?.showDimensions !== false;
@@ -747,7 +938,7 @@ function applyProject(project, options = {}) {
   state.serverId = fromServer ? options.serverId : null;
   state.serverName = fromServer ? (options.serverName || 'Untitled plan') : 'Untitled plan';
   state.dirty = false;
-  state.history = []; state.future = []; state.selectedWall = null; state.selectedLabel = null; state.selectedRuler = null; state.selectedShape = null;
+  state.history = []; state.future = []; state.selectedWall = null; state.selectedLabel = null; state.selectedRuler = null; state.selectedShape = null; state.selectedObject = null;
   persist(); updateUi(); draw();
 }
 
@@ -806,8 +997,8 @@ async function openServerPlans() {
 }
 
 function resetProject() {
-  state.walls = []; state.labels = []; state.rulers = []; state.shapes = []; state.history = []; state.future = [];
-  state.selectedWall = null; state.selectedLabel = null; state.selectedRuler = null; state.selectedShape = null; state.editingHandle = null; state.draggingLabel = false;
+  state.walls = []; state.labels = []; state.rulers = []; state.shapes = []; state.objects = []; state.history = []; state.future = [];
+  state.selectedWall = null; state.selectedLabel = null; state.selectedRuler = null; state.selectedShape = null; state.selectedObject = null; state.editingHandle = null; state.draggingLabel = false;
   state.start = null; state.preview = null; state.zoom = 1; state.offset = { x: 0, y: 0 };
   state.gridInches = 12; state.grid = gridPixels(12); state.wallWidth = 6;
   state.showText = true; state.showDimensions = true;
@@ -826,11 +1017,16 @@ document.querySelectorAll('[data-shape]').forEach((button) => button.addEventLis
   document.querySelectorAll('[data-shape]').forEach((choice) => choice.classList.toggle('active', choice === button));
   setTool('shapes');
 }));
+document.querySelectorAll('[data-object]').forEach((button) => button.addEventListener('click', () => {
+  state.objectKind = button.dataset.object;
+  document.querySelectorAll('[data-object]').forEach((choice) => choice.classList.toggle('active', choice === button));
+  setTool('objects');
+}));
 $('#undoButton').addEventListener('click', undo); $('#redoButton').addEventListener('click', redo);
 $('#centerButton').addEventListener('click', () => { if (state.offset.x || state.offset.y) markDirty(); state.offset = { x: 0, y: 0 }; persist(); draw(); });
 $('#clearButton').addEventListener('click', () => {
-  if ((!state.walls.length && !state.labels.length && !state.rulers.length && !state.shapes.length) || !confirm('Clear the entire floor plan?')) return;
-  pushHistory(); state.walls = []; state.labels = []; state.rulers = []; state.shapes = []; state.selectedWall = null; state.selectedLabel = null; state.selectedRuler = null; state.selectedShape = null; markDirty(); persist(); updateUi(); draw();
+  if ((!state.walls.length && !state.labels.length && !state.rulers.length && !state.shapes.length && !state.objects.length) || !confirm('Clear the entire floor plan?')) return;
+  pushHistory(); state.walls = []; state.labels = []; state.rulers = []; state.shapes = []; state.objects = []; state.selectedWall = null; state.selectedLabel = null; state.selectedRuler = null; state.selectedShape = null; state.selectedObject = null; markDirty(); persist(); updateUi(); draw();
 });
 $('#wallWidth').addEventListener('input', (event) => {
   if (state.selectedWall === null || !state.walls[state.selectedWall]) return;
@@ -887,6 +1083,7 @@ $('#gridSize').addEventListener('change', (event) => {
   state.labels = state.labels.map((label) => ({ ...label, x: label.x * scale, y: label.y * scale }));
   state.rulers = state.rulers.map((ruler) => ({ ...ruler, a: { x: ruler.a.x * scale, y: ruler.a.y * scale }, b: { x: ruler.b.x * scale, y: ruler.b.y * scale }, ...(ruler.labelOffset ? { labelOffset: { x: ruler.labelOffset.x * scale, y: ruler.labelOffset.y * scale } } : {}) }));
   state.shapes = state.shapes.map((shape) => shape.a ? { ...shape, a: { x: shape.a.x * scale, y: shape.a.y * scale }, b: { x: shape.b.x * scale, y: shape.b.y * scale } } : { ...shape, center: { x: shape.center.x * scale, y: shape.center.y * scale }, radius: shape.radius * scale });
+  state.objects = state.objects.map((object) => ({ ...object, x: object.x * scale, y: object.y * scale, width: object.width * scale, height: object.height * scale }));
   markDirty(); persist(); updateUi(); draw();
 });
 function setZoom(value, anchor = null) {
@@ -925,7 +1122,7 @@ $('#exportButton').addEventListener('click', () => {
 });
 window.addEventListener('keydown', (event) => {
   if (event.code === 'Space' && !event.repeat) { state.spacePressed = true; setCanvasCursor(); event.preventDefault(); }
-  if (event.key.toLowerCase() === 'w') setTool('wall'); if (event.key.toLowerCase() === 'v') setTool('edit'); if (event.key.toLowerCase() === 'r') setTool('ruler'); if (event.key.toLowerCase() === 's') setTool('shapes'); if (event.key.toLowerCase() === 't') setTool('text'); if (event.key.toLowerCase() === 'e') setTool('erase'); if (event.key.toLowerCase() === 'p') setTool('pan');
+  if (event.key.toLowerCase() === 'w') setTool('wall'); if (event.key.toLowerCase() === 'v') setTool('edit'); if (event.key.toLowerCase() === 'r') setTool('ruler'); if (event.key.toLowerCase() === 's') setTool('shapes'); if (event.key.toLowerCase() === 'o') setTool('objects'); if (event.key.toLowerCase() === 't') setTool('text'); if (event.key.toLowerCase() === 'e') setTool('erase'); if (event.key.toLowerCase() === 'p') setTool('pan');
   if ((event.key === 'Delete' || event.key === 'Backspace') && state.tool === 'text' && state.selectedLabel !== null) {
     event.preventDefault(); const selected = state.selectedLabel; state.selectedLabel = null; commitLabels(state.labels.filter((_, index) => index !== selected));
   }

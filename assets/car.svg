@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 72" role="img" aria-label="Car top view">
+  <defs>
+    <linearGradient id="body" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#f7f4ec"/>
+      <stop offset="1" stop-color="#d8d2c4"/>
+    </linearGradient>
+  </defs>
+  <rect x="14" y="8" width="152" height="56" rx="24" fill="url(#body)" stroke="#242620" stroke-width="5"/>
+  <path d="M50 14h80c13 6 22 15 26 22-4 7-13 16-26 22H50c-13-5-22-14-26-22 4-8 13-17 26-22Z" fill="#cfd7d7" stroke="#242620" stroke-width="3"/>
+  <path d="M74 15v42M115 15v42" stroke="#242620" stroke-width="3" opacity=".75"/>
+  <path d="M25 20c8 3 14 8 18 16-4 8-10 13-18 16M155 20c-8 3-14 8-18 16 4 8 10 13 18 16" fill="none" stroke="#8d9188" stroke-width="3"/>
+  <circle cx="45" cy="36" r="4" fill="#b54b2d"/>
+  <circle cx="135" cy="36" r="4" fill="#b54b2d"/>
+</svg>

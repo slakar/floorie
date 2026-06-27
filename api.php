@@ -10,6 +10,7 @@ const MAX_WALLS = 10000;
 const MAX_LABELS = 2000;
 const MAX_RULERS = 5000;
 const MAX_SHAPES = 5000;
+const MAX_OBJECTS = 2000;
 
 function respond(int $status, array $payload): void
 {
@@ -87,6 +88,17 @@ function validate_plan($plan): void
             || (isset($shape['color']) && !valid_color($shape['color']))
             || (isset($shape['shade']) && !valid_shade($shape['shade']))) {
             respond(422, ['error' => 'The plan contains an invalid shape.']);
+        }
+    }
+    $objects = $plan['objects'] ?? [];
+    if (!is_array($objects) || count($objects) > MAX_OBJECTS) respond(422, ['error' => 'The plan contains invalid objects.']);
+    foreach ($objects as $object) {
+        $symbol = is_array($object) ? ($object['symbol'] ?? '') : '';
+        if (!is_array($object) || !in_array($symbol, ['car', 'person'], true) || !valid_point($object)
+            || !isset($object['width'], $object['height'])
+            || !finite_number($object['width']) || !finite_number($object['height'])
+            || $object['width'] <= 0 || $object['height'] <= 0) {
+            respond(422, ['error' => 'The plan contains an invalid object.']);
         }
     }
 }

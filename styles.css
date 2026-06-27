@@ -30,7 +30,7 @@ button { color: inherit; }
 .erase-icon { font-size: 24px; }
 .pan-icon { font-size: 22px; }
 .text-icon { font-family: 'Instrument Serif', serif; font-size: 25px; }
-.ruler-icon, .shapes-icon { font-size: 23px; }
+.ruler-icon, .shapes-icon, .object-icon { font-size: 23px; }
 .shape-palette { position: absolute; z-index: 5; top: 16px; left: 96px; display: flex; width: 68px; flex-direction: column; gap: 5px; padding: 7px; border: 1px solid #c4c0b5; border-radius: 4px; background: #f7f4ec; box-shadow: 0 8px 28px rgba(48,45,38,.14); }
 .shape-palette[hidden] { display: none; }
 .shape-choice { display: flex; height: 52px; flex-direction: column; align-items: center; justify-content: center; gap: 2px; border: 1px solid transparent; border-radius: 3px; background: transparent; cursor: pointer; }
@@ -38,6 +38,7 @@ button { color: inherit; }
 .shape-choice small { color: #686a62; font-size: 9px; }
 .shape-choice:hover { background: #ece8dd; }
 .shape-choice.active { color: #a83e22; border-color: #dfb5a7; background: #f1dfd7; }
+.object-palette { top: 85px; }
 .tool.compact { height: 53px; }
 .tool-divider { width: 42px; height: 1px; margin: 7px 0; background: #d3cfc4; }
 .canvas-shell { position: relative; overflow: hidden; background: #e4e0d5; }
@@ -49,7 +50,7 @@ button { color: inherit; }
 .zoom-controls button { width: 34px; height: 34px; border: 0; background: transparent; cursor: pointer; font-size: 18px; }
 .zoom-controls button:hover { background: #e9e5da; }
 .zoom-controls span { min-width: 53px; text-align: center; color: #686a61; font-size: 10px; }
-.inspector { display: flex; flex-direction: column; min-height: 0; padding: 20px; overflow: hidden; background: #f7f4ec; border-left: 1px solid #c9c5ba; }
+.inspector { display: flex; flex-direction: column; min-height: 0; padding: 20px; overflow-y: auto; background: #f7f4ec; border-left: 1px solid #c9c5ba; }
 .inspector-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 28px; }
 .text-button { border: 0; background: transparent; color: #a34329; font-size: 11px; cursor: pointer; }
 .field { display: flex; flex-direction: column; gap: 9px; margin-bottom: 14px; color: #56584f; font-size: 11px; font-weight: 600; }
@@ -73,10 +74,10 @@ button { color: inherit; }
 .visibility-controls { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 12px; margin: 0 0 14px; padding: 10px 0; border-top: 1px solid #d5d0c5; border-bottom: 1px solid #d5d0c5; }
 .visibility-controls label { display: flex; align-items: center; gap: 5px; color: #56584f; cursor: pointer; font-size: 10px; }
 .visibility-controls input { width: 14px; height: 14px; margin: 0; accent-color: #ba4b2c; }
-.wall-list-panel { display: flex; flex: 1; min-height: 100px; flex-direction: column; margin-top: auto; padding-top: 14px; border-top: 1px solid #d5d0c5; overflow: hidden; }
+.wall-list-panel { display: flex; flex: 0 0 auto; min-height: 100px; flex-direction: column; margin-top: 12px; padding-top: 14px; border-top: 1px solid #d5d0c5; overflow: visible; }
 .wall-list-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .wall-list-heading > span:last-child { color: #a34329; font-size: 10px; font-weight: 700; }
-.element-lists { min-height: 0; overflow-y: auto; }
+.element-lists { min-height: 0; overflow: visible; }
 .element-section-heading { display: flex; align-items: center; justify-content: space-between; padding: 8px 3px 5px; color: #777970; font-size: 9px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 .element-section-heading span:last-child { color: #a34329; letter-spacing: 0; text-transform: none; }
 .wall-list { min-height: 0; margin: 0; padding: 0; overflow: visible; list-style: none; }

@@ -11,6 +11,7 @@ const MAX_LABELS = 2000;
 const MAX_RULERS = 5000;
 const MAX_SHAPES = 5000;
 const MAX_OBJECTS = 2000;
+const MAX_ELEVATION_ITEMS = 5000;
 
 function respond(int $status, array $payload): void
 {
@@ -99,6 +100,37 @@ function validate_plan($plan): void
             || !finite_number($object['width']) || !finite_number($object['height'])
             || $object['width'] <= 0 || $object['height'] <= 0) {
             respond(422, ['error' => 'The plan contains an invalid object.']);
+        }
+    }
+    $elevations = $plan['elevations'] ?? null;
+    if ($elevations !== null) {
+        if (!is_array($elevations)) respond(422, ['error' => 'The plan contains invalid elevations.']);
+        $views = $elevations['views'] ?? $elevations;
+        if (!is_array($views)) respond(422, ['error' => 'The plan contains invalid elevations.']);
+        foreach (['front', 'right', 'left', 'rear'] as $viewName) {
+            $view = $views[$viewName] ?? null;
+            if ($view === null) continue;
+            if (!is_array($view) || (isset($view['offset']) && !valid_point($view['offset']))
+                || (isset($view['zoom']) && (!finite_number($view['zoom']) || $view['zoom'] < 0.1 || $view['zoom'] > 2))
+                || (isset($view['gridInches']) && (!finite_number($view['gridInches']) || !in_array((int) $view['gridInches'], [1, 3, 6, 12, 24], true)))) {
+                respond(422, ['error' => 'The plan contains an invalid elevation view.']);
+            }
+            $items = $view['items'] ?? [];
+            if (!is_array($items) || count($items) > MAX_ELEVATION_ITEMS) respond(422, ['error' => 'The plan contains invalid elevation items.']);
+            foreach ($items as $item) {
+                $type = is_array($item) ? ($item['type'] ?? '') : '';
+                $linear = in_array($type, ['line', 'rect', 'dimension'], true);
+                $text = $type === 'text';
+                if ((!$linear && !$text)
+                    || ($linear && (!valid_point($item['a'] ?? null) || !valid_point($item['b'] ?? null)))
+                    || ($text && (!valid_point($item) || !isset($item['text']) || !is_string($item['text']) || strlen($item['text']) > 800))
+                    || (isset($item['labelOffset']) && !valid_point($item['labelOffset']))
+                    || (isset($item['color']) && !valid_color($item['color']))
+                    || (isset($item['width']) && (!finite_number($item['width']) || $item['width'] < 1 || $item['width'] > 8))
+                    || (isset($item['fontSize']) && (!finite_number($item['fontSize']) || $item['fontSize'] < 10 || $item['fontSize'] > 48))) {
+                    respond(422, ['error' => 'The plan contains an invalid elevation item.']);
+                }
+            }
         }
     }
 }

@@ -18,6 +18,7 @@
           <span class="eyebrow">Current plan</span>
           <strong id="projectName">Untitled plan</strong>
         </div>
+
         <div class="top-actions">
           <span id="saveStatus" class="save-status">Saved locally</span>
           <input id="loadInput" type="file" accept="application/json,.json" hidden />
@@ -29,7 +30,12 @@
         </div>
       </header>
 
-      <main class="workspace">
+      <nav class="page-switch canvas-page-switch" aria-label="Workspace switcher">
+        <button id="floorPageButton" class="page-button active" type="button">Floor Plan</button>
+        <button id="elevationPageButton" class="page-button" type="button">Elevations</button>
+      </nav>
+
+      <main id="floorWorkspace" class="workspace">
         <aside class="toolbar" aria-label="Drawing tools">
           <button class="tool active" data-tool="wall" title="Draw walls (W)">
             <span class="tool-icon wall-icon"></span><span>Wall</span>
@@ -90,6 +96,7 @@
           <label class="field">
             <span>Grid spacing</span>
             <select id="gridSize">
+              <option value="1">1 inch</option>
               <option value="3">3 inches</option>
               <option value="6">6 inches</option>
               <option value="12" selected>1 foot</option>
@@ -164,6 +171,107 @@
               <div class="element-section-heading"><span>Objects</span><span id="objectCount">0</span></div>
               <ul id="objectList" class="wall-list"><li class="empty-list">Add a car or person to see it here.</li></ul>
             </div>
+          </section>
+        </aside>
+      </main>
+      <main id="elevationWorkspace" class="workspace elevation-workspace" hidden>
+        <aside class="toolbar" aria-label="Elevation drawing tools">
+          <button class="tool active" data-elev-tool="line" title="Draw elevation lines">
+            <span class="tool-icon">/</span><span>Line</span>
+          </button>
+          <button class="tool" data-elev-tool="rect" title="Draw rectangles">
+            <span class="tool-icon">□</span><span>Rect</span>
+          </button>
+          <button class="tool" data-elev-tool="dimension" title="Draw dimensions">
+            <span class="tool-icon">↔</span><span>Dim</span>
+          </button>
+          <button class="tool" data-elev-tool="text" title="Add text labels">
+            <span class="tool-icon text-icon">T</span><span>Text</span>
+          </button>
+          <button class="tool" data-elev-tool="select" title="Select and move items">
+            <span class="tool-icon">✥</span><span>Select</span>
+          </button>
+          <button class="tool" data-elev-tool="erase" title="Erase elevation items">
+            <span class="tool-icon erase-icon">⌫</span><span>Erase</span>
+          </button>
+          <button class="tool" data-elev-tool="pan" title="Pan elevation canvas">
+            <span class="tool-icon pan-icon">✥</span><span>Pan</span>
+          </button>
+          <div class="tool-divider"></div>
+          <button id="elevUndoButton" class="tool compact" title="Undo elevation change" disabled>
+            <span class="tool-icon">&#8630;</span><span>Undo</span>
+          </button>
+          <button id="elevRedoButton" class="tool compact" title="Redo elevation change" disabled>
+            <span class="tool-icon">&#8631;</span><span>Redo</span>
+          </button>
+        </aside>
+
+        <section class="canvas-shell">
+          <canvas id="elevationCanvas" aria-label="Home elevation drawing canvas"></canvas>
+          <div class="canvas-help"><span id="elevModeLabel">Line tool</span> · <span id="elevModeHelp" class="help-copy">Drag to draw walls, roof lines, trim, and other elevation outlines</span></div>
+          <div class="zoom-controls">
+            <button id="elevZoomOut" aria-label="Zoom out">−</button>
+            <span id="elevZoomLabel">100%</span>
+            <button id="elevZoomIn" aria-label="Zoom in">+</button>
+          </div>
+        </section>
+
+        <aside class="inspector elevation-inspector">
+          <div class="inspector-heading">
+            <span class="eyebrow">Elevation settings</span>
+            <button id="clearElevationButton" class="text-button">Clear</button>
+          </div>
+          <label class="field">
+            <span>Elevation view</span>
+            <select id="elevationViewSelect">
+              <option value="front">Front elevation</option>
+              <option value="right">Right side elevation</option>
+              <option value="left">Left side elevation</option>
+              <option value="rear">Rear elevation</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Grid spacing</span>
+            <select id="elevGridSize">
+              <option value="1">1 inch</option>
+              <option value="3">3 inches</option>
+              <option value="6">6 inches</option>
+              <option value="12" selected>1 foot</option>
+              <option value="24">2 feet</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Selected line color</span>
+            <div class="color-row">
+              <input id="elevColor" type="color" value="#242620" />
+              <output id="elevColorValue">#242620</output>
+            </div>
+          </label>
+          <label class="field">
+            <span>Selected line thickness</span>
+            <div class="range-row">
+              <input id="elevLineWidth" type="range" min="1" max="8" step="1" value="2" />
+              <output id="elevLineWidthValue">2 px</output>
+            </div>
+          </label>
+          <label class="field">
+            <span>Text size</span>
+            <div class="range-row">
+              <input id="elevTextSize" type="range" min="10" max="48" step="1" value="14" />
+              <output id="elevTextSizeValue">14 px</output>
+            </div>
+          </label>
+          <label class="field">
+            <span id="elevLengthLabel">Selected line length (ft)</span>
+            <input id="elevLength" class="number-input" type="number" min="0.1" step="0.1" disabled />
+          </label>
+          <div class="legend-card">
+            <span class="legend-swatch"></span>
+            <div><strong id="elevItemCount">0 items</strong><small>Draft front, side, rear, and roof outlines</small></div>
+          </div>
+          <section class="wall-list-panel">
+            <div class="wall-list-heading"><span class="eyebrow">Elevation elements</span></div>
+            <ul id="elevationList" class="wall-list"><li class="empty-list">Draw elevation lines, dimensions, rectangles, or labels.</li></ul>
           </section>
         </aside>
       </main>

@@ -2,10 +2,11 @@ const canvas = document.querySelector('#planCanvas');
 const ctx = canvas.getContext('2d');
 const shell = canvas.parentElement;
 const $ = (selector) => document.querySelector(selector);
-const gridPixels = (inches) => ({ 3: 20, 6: 25, 12: 32, 24: 44 })[inches] || 32;
+const gridPixels = (inches) => ({ 1: 12, 3: 20, 6: 25, 12: 32, 24: 44 })[inches] || 32;
 const DEFAULT_WALL_COLOR = '#30332d';
 const DEFAULT_SHAPE_COLOR = '#59615b';
 const COLOR_PATTERN = /^#[0-9a-f]{6}$/i;
+var elevationReady = false;
 const OBJECT_DEFS = {
   car: { label: 'Car', src: './assets/car.svg', widthFt: 15, heightFt: 6 },
   person: { label: 'Person', src: './assets/person.svg', widthFt: 2, heightFt: 2 },
@@ -371,7 +372,7 @@ function draw() {
 
 function projectData() {
   return {
-    format: 'gridline-floor-plan', version: 6, exportedAt: new Date().toISOString(),
+    format: 'gridline-floor-plan', version: 7, exportedAt: new Date().toISOString(),
     settings: { gridInches: state.gridInches, wallWidth: state.wallWidth, showText: state.showText, showDimensions: state.showDimensions },
     viewport: { zoom: state.zoom, offset: { ...state.offset } },
     walls: state.walls.map((wall) => ({ a: { ...wall.a }, b: { ...wall.b }, thickness: wall.thickness || state.wallWidth, color: normalizeColor(wall.color, DEFAULT_WALL_COLOR), shade: normalizeShade(wall.shade) })),
@@ -379,6 +380,7 @@ function projectData() {
     rulers: state.rulers.map((ruler) => ({ a: { ...ruler.a }, b: { ...ruler.b }, ...(ruler.labelOffset ? { labelOffset: { ...ruler.labelOffset } } : {}) })),
     shapes: state.shapes.map((shape) => structuredClone(shape)),
     objects: state.objects.map((object) => ({ symbol: object.symbol, x: object.x, y: object.y, width: object.width, height: object.height })),
+    elevations: elevationReady && typeof elevationProjectData === 'function' ? elevationProjectData() : (saved.elevations || null),
     server: state.serverId ? { id: state.serverId, name: state.serverName } : null,
   };
 }
@@ -928,7 +930,8 @@ function applyProject(project, options = {}) {
     return { type: shape.type, center: { x: Number(shape.center.x), y: Number(shape.center.y) }, radius: Math.max(0, Number(shape.radius)), ...style };
   });
   state.objects = (project.objects || []).map((object) => ({ symbol: object.symbol, x: Number(object.x), y: Number(object.y), width: Math.max(1, Number(object.width)), height: Math.max(1, Number(object.height)) }));
-  if ([3, 6, 12, 24].includes(Number(project.settings?.gridInches))) state.gridInches = Number(project.settings.gridInches);
+  if (typeof loadElevationProject === 'function') loadElevationProject(project.elevations);
+  if ([1, 3, 6, 12, 24].includes(Number(project.settings?.gridInches))) state.gridInches = Number(project.settings.gridInches);
   if (Number(project.settings?.wallWidth) >= 3 && Number(project.settings?.wallWidth) <= 12) state.wallWidth = Number(project.settings.wallWidth);
   state.showText = project.settings?.showText !== false; state.showDimensions = project.settings?.showDimensions !== false;
   state.grid = gridPixels(state.gridInches);
@@ -1003,6 +1006,7 @@ function resetProject() {
   state.gridInches = 12; state.grid = gridPixels(12); state.wallWidth = 6;
   state.showText = true; state.showDimensions = true;
   state.serverId = null; state.serverName = 'Untitled plan'; state.dirty = false;
+  if (typeof resetElevationProject === 'function') resetElevationProject(false);
   persist(); updateUi(); draw(); setTool('wall'); $('#saveStatus').textContent = 'New project';
 }
 
@@ -1118,9 +1122,12 @@ $('#saveNewProject').addEventListener('click', async () => {
 $('#closeServerDialog').addEventListener('click', () => $('#serverDialog').close());
 $('#serverDialog').addEventListener('click', (event) => { if (event.target === $('#serverDialog')) $('#serverDialog').close(); });
 $('#exportButton').addEventListener('click', () => {
-  const link = document.createElement('a'); link.download = 'gridline-floor-plan.png'; link.href = canvas.toDataURL('image/png'); link.click();
+  const elevationActive = $('#elevationWorkspace') && !$('#elevationWorkspace').hidden;
+  const targetCanvas = elevationActive ? $('#elevationCanvas') : canvas;
+  const link = document.createElement('a'); link.download = elevationActive ? 'gridline-elevation.png' : 'gridline-floor-plan.png'; link.href = targetCanvas.toDataURL('image/png'); link.click();
 });
 window.addEventListener('keydown', (event) => {
+  if (typeof elevationPageActive === 'function' && elevationPageActive()) return;
   if (event.code === 'Space' && !event.repeat) { state.spacePressed = true; setCanvasCursor(); event.preventDefault(); }
   if (event.key.toLowerCase() === 'w') setTool('wall'); if (event.key.toLowerCase() === 'v') setTool('edit'); if (event.key.toLowerCase() === 'r') setTool('ruler'); if (event.key.toLowerCase() === 's') setTool('shapes'); if (event.key.toLowerCase() === 'o') setTool('objects'); if (event.key.toLowerCase() === 't') setTool('text'); if (event.key.toLowerCase() === 'e') setTool('erase'); if (event.key.toLowerCase() === 'p') setTool('pan');
   if ((event.key === 'Delete' || event.key === 'Backspace') && state.tool === 'text' && state.selectedLabel !== null) {
@@ -1136,3 +1143,266 @@ canvas.addEventListener('wheel', handleWheelZoom, { passive: false });
 canvas.addEventListener('contextmenu', (event) => event.preventDefault());
 new ResizeObserver(resize).observe(shell);
 updateUi(); resize(); setTool('wall'); persist();
+
+// Elevation workspace: a compact second drafting page for front/side/rear house elevations.
+const elevationCanvas = $('#elevationCanvas');
+const elevationShell = elevationCanvas?.parentElement;
+const elevationCtx = elevationCanvas?.getContext('2d');
+const ELEVATION_VIEW_KEYS = ['front', 'right', 'left', 'rear'];
+const ELEVATION_VIEW_NAMES = { front: 'Front', right: 'Right side', left: 'Left side', rear: 'Rear' };
+const ELEVATION_DEFAULT_COLOR = '#242620';
+
+function blankElevationView() { return { items: [], zoom: 1, offset: { x: 70, y: 360 }, gridInches: 12 }; }
+function normalizeElevationView(view = {}) {
+  const clean = blankElevationView();
+  clean.zoom = Number.isFinite(Number(view.zoom)) ? Math.max(.1, Math.min(2, Number(view.zoom))) : clean.zoom;
+  if (validPoint(view.offset)) clean.offset = { x: Number(view.offset.x), y: Number(view.offset.y) };
+  if ([1, 3, 6, 12, 24].includes(Number(view.gridInches))) clean.gridInches = Number(view.gridInches);
+  clean.items = Array.isArray(view.items) ? view.items.filter((item) => item && ['line', 'rect', 'dimension', 'text'].includes(item.type)).map((item) => {
+    const base = { type: item.type, color: normalizeColor(item.color, ELEVATION_DEFAULT_COLOR), width: Math.max(1, Math.min(8, Number(item.width) || 2)) };
+    if (item.type === 'text') return { ...base, text: String(item.text || '').slice(0, 200), x: Number(item.x) || 0, y: Number(item.y) || 0, fontSize: Math.max(10, Math.min(48, Number(item.fontSize) || 14)) };
+    return validPoint(item.a) && validPoint(item.b) ? { ...base, a: { x: Number(item.a.x), y: Number(item.a.y) }, b: { x: Number(item.b.x), y: Number(item.b.y) }, ...(item.type === 'dimension' && validPoint(item.labelOffset) ? { labelOffset: { x: Number(item.labelOffset.x), y: Number(item.labelOffset.y) } } : {}) } : null;
+  }).filter(Boolean) : [];
+  return clean;
+}
+function normalizeElevationProject(data) {
+  const sourceViews = data?.views || data || {};
+  return {
+    currentView: ELEVATION_VIEW_KEYS.includes(data?.currentView) ? data.currentView : 'front',
+    views: Object.fromEntries(ELEVATION_VIEW_KEYS.map((key) => [key, normalizeElevationView(sourceViews[key])])),
+  };
+}
+
+const elevationInitial = normalizeElevationProject(saved.elevations);
+const elevationState = {
+  currentView: elevationInitial.currentView,
+  views: elevationInitial.views,
+  tool: 'line', color: ELEVATION_DEFAULT_COLOR, lineWidth: 2, textSize: 14,
+  history: [], future: [], styleSnapshot: null,
+  selected: null, drawing: null, dragging: null, dragSnapshot: null, dragStart: null, dragOriginal: null,
+  panning: false, panPointer: null, spacePressed: false, dpr: window.devicePixelRatio || 1,
+};
+
+function currentElevation() { return elevationState.views[elevationState.currentView]; }
+function elevationGridPixels() { return gridPixels(currentElevation().gridInches); }
+function elevationPixelsToInches(pixels) { return pixels / elevationGridPixels() * currentElevation().gridInches; }
+function elevationFeetToPixels(feet) { return feet * 12 / currentElevation().gridInches * elevationGridPixels(); }
+function elevationSegmentLengthInches(item) { return elevationPixelsToInches(Math.hypot(item.b.x - item.a.x, item.b.y - item.a.y)); }
+function setElevationSegmentLength(item, feet) {
+  const dx = item.b.x - item.a.x, dy = item.b.y - item.a.y, current = Math.hypot(dx, dy) || 1;
+  const length = elevationFeetToPixels(feet);
+  item.b = { x: item.a.x + dx / current * length, y: item.a.y + dy / current * length };
+}
+function selectedElevationLengthInfo() {
+  const item = currentElevation().items[elevationState.selected];
+  if (!item || !['line', 'dimension'].includes(item.type)) return null;
+  return { label: item.type === 'dimension' ? 'Selected dimension length (ft)' : 'Selected line length (ft)', length: feetValueFromInches(elevationSegmentLengthInches(item)) };
+}
+function elevationSnapshot() { return structuredClone(elevationState.views); }
+function restoreElevationSnapshot(snapshot) { elevationState.views = structuredClone(snapshot); }
+function pushElevationHistory(snapshot = elevationSnapshot()) {
+  elevationState.history.push(structuredClone(snapshot));
+  if (elevationState.history.length > 100) elevationState.history.shift();
+  elevationState.future = [];
+}
+function undoElevation() {
+  if (!elevationState.history.length) return;
+  elevationState.future.push(elevationSnapshot());
+  restoreElevationSnapshot(elevationState.history.pop());
+  elevationState.selected = null; elevationState.drawing = null; elevationState.dragging = null; elevationState.styleSnapshot = null;
+  markDirty(); persist(); updateElevationUi(); drawElevation();
+}
+function redoElevation() {
+  if (!elevationState.future.length) return;
+  elevationState.history.push(elevationSnapshot());
+  restoreElevationSnapshot(elevationState.future.pop());
+  elevationState.selected = null; elevationState.drawing = null; elevationState.dragging = null; elevationState.styleSnapshot = null;
+  markDirty(); persist(); updateElevationUi(); drawElevation();
+}
+function applyElevationSelectedLength(feet) {
+  const value = Number(feet), item = currentElevation().items[elevationState.selected];
+  if (!item || !['line', 'dimension'].includes(item.type) || !Number.isFinite(value) || value <= 0) return;
+  const snapshot = elevationSnapshot();
+  setElevationSegmentLength(item, value);
+  if (JSON.stringify(elevationState.views) !== JSON.stringify(snapshot)) pushElevationHistory(snapshot);
+  markDirty(); persist(); updateElevationUi(); drawElevation();
+}
+function elevationProjectData() { return { version: 1, currentView: elevationState.currentView, views: structuredClone(elevationState.views) }; }
+function loadElevationProject(data) {
+  const next = normalizeElevationProject(data);
+  elevationState.currentView = next.currentView; elevationState.views = next.views; elevationState.selected = null; elevationState.history = []; elevationState.future = []; elevationState.styleSnapshot = null;
+  updateElevationUi(); resizeElevation(); drawElevation();
+}
+function resetElevationProject(redraw = true) {
+  const next = normalizeElevationProject(null);
+  elevationState.currentView = 'front'; elevationState.views = next.views; elevationState.selected = null; elevationState.history = []; elevationState.future = []; elevationState.styleSnapshot = null;
+  if (redraw) { updateElevationUi(); resizeElevation(); drawElevation(); }
+}
+
+function elevationScreenPoint(event) { const rect = elevationCanvas.getBoundingClientRect(); return { x: event.clientX - rect.left, y: event.clientY - rect.top }; }
+function elevationRawPoint(event) { const point = elevationScreenPoint(event), view = currentElevation(); return { x: (point.x - view.offset.x) / view.zoom, y: (point.y - view.offset.y) / view.zoom }; }
+function elevationSnapPoint(event) { const raw = elevationRawPoint(event), grid = elevationGridPixels(); return { x: Math.round(raw.x / grid) * grid, y: Math.round(raw.y / grid) * grid }; }
+function elevationToScreen(point) { const view = currentElevation(); return { x: view.offset.x + point.x * view.zoom, y: view.offset.y + point.y * view.zoom }; }
+
+function resizeElevation() {
+  if (!elevationCanvas || !elevationShell) return;
+  const { width, height } = elevationShell.getBoundingClientRect();
+  elevationCanvas.width = Math.floor(width * elevationState.dpr); elevationCanvas.height = Math.floor(height * elevationState.dpr);
+  elevationCanvas.style.width = `${width}px`; elevationCanvas.style.height = `${height}px`; drawElevation();
+}
+function drawElevationGrid(width, height) {
+  const view = currentElevation(), spacing = elevationGridPixels() * view.zoom;
+  const startX = ((view.offset.x % spacing) + spacing) % spacing, startY = ((view.offset.y % spacing) + spacing) % spacing;
+  elevationCtx.lineWidth = 1;
+  for (let x = startX; x <= width; x += spacing) { const index = Math.round((x - view.offset.x) / spacing); elevationCtx.strokeStyle = index % 5 === 0 ? '#c7c3b8' : '#d8d4ca'; elevationCtx.beginPath(); elevationCtx.moveTo(x, 0); elevationCtx.lineTo(x, height); elevationCtx.stroke(); }
+  for (let y = startY; y <= height; y += spacing) { const index = Math.round((y - view.offset.y) / spacing); elevationCtx.strokeStyle = index % 5 === 0 ? '#c7c3b8' : '#d8d4ca'; elevationCtx.beginPath(); elevationCtx.moveTo(0, y); elevationCtx.lineTo(width, y); elevationCtx.stroke(); }
+}
+function elevationDimensionLabelPosition(item) {
+  const view = currentElevation(), midpoint = { x: (item.a.x + item.b.x) / 2, y: (item.a.y + item.b.y) / 2 };
+  if (validPoint(item.labelOffset)) return { x: midpoint.x + item.labelOffset.x, y: midpoint.y + item.labelOffset.y };
+  const dx = item.b.x - item.a.x, dy = item.b.y - item.a.y, length = Math.hypot(dx, dy) || 1;
+  return { x: midpoint.x - dy / length * (15 / view.zoom), y: midpoint.y + dx / length * (15 / view.zoom) };
+}
+function drawElevationPreviewLength(item) {
+  const a = elevationToScreen(item.a), b = elevationToScreen(item.b), dx = b.x - a.x, dy = b.y - a.y, length = Math.hypot(dx, dy) || 1;
+  const x = (a.x + b.x) / 2 - dy / length * 14, y = (a.y + b.y) / 2 + dx / length * 14;
+  const label = formatLength(elevationPixelsToInches(Math.hypot(item.b.x - item.a.x, item.b.y - item.a.y)));
+  elevationCtx.save(); elevationCtx.font = '600 11px "DM Sans", sans-serif'; elevationCtx.textAlign = 'center'; elevationCtx.textBaseline = 'middle';
+  const width = elevationCtx.measureText(label).width + 12; elevationCtx.fillStyle = 'rgba(247,244,236,.92)'; elevationCtx.fillRect(x - width / 2, y - 10, width, 20);
+  elevationCtx.fillStyle = '#a34329'; elevationCtx.fillText(label, x, y + .5); elevationCtx.restore();
+}
+function drawElevationItem(item, preview = false, selected = false) {
+  const view = currentElevation(); elevationCtx.save(); elevationCtx.translate(view.offset.x, view.offset.y); elevationCtx.scale(view.zoom, view.zoom);
+  elevationCtx.strokeStyle = preview || selected ? '#b54b2d' : normalizeColor(item.color, ELEVATION_DEFAULT_COLOR); elevationCtx.fillStyle = elevationCtx.strokeStyle;
+  elevationCtx.lineWidth = Math.max(1, Number(item.width) || 2) / view.zoom; elevationCtx.lineCap = 'round'; elevationCtx.lineJoin = 'round';
+  if (item.type === 'line' || item.type === 'dimension') { elevationCtx.setLineDash(item.type === 'dimension' ? [8 / view.zoom, 5 / view.zoom] : []); elevationCtx.beginPath(); elevationCtx.moveTo(item.a.x, item.a.y); elevationCtx.lineTo(item.b.x, item.b.y); elevationCtx.stroke(); elevationCtx.setLineDash([]); }
+  if (item.type === 'rect') { const x = Math.min(item.a.x, item.b.x), y = Math.min(item.a.y, item.b.y); elevationCtx.strokeRect(x, y, Math.abs(item.b.x - item.a.x), Math.abs(item.b.y - item.a.y)); }
+  if (item.type === 'text') { elevationCtx.font = `600 ${item.fontSize || 14}px "DM Sans", sans-serif`; elevationCtx.textAlign = 'center'; elevationCtx.textBaseline = 'middle'; elevationCtx.fillText(item.text, item.x, item.y); }
+  if (item.type === 'dimension') {
+    const label = formatLength(elevationPixelsToInches(Math.hypot(item.b.x - item.a.x, item.b.y - item.a.y)));
+    const mid = elevationDimensionLabelPosition(item);
+    elevationCtx.font = `600 ${12 / view.zoom}px "DM Sans", sans-serif`; elevationCtx.textAlign = 'center'; elevationCtx.textBaseline = 'middle'; elevationCtx.fillText(label, mid.x, mid.y);
+  }
+  if (selected && item.type !== 'text') { elevationCtx.strokeStyle = '#b54b2d'; elevationCtx.setLineDash([6 / view.zoom, 4 / view.zoom]); if (item.type === 'rect') { const x = Math.min(item.a.x, item.b.x), y = Math.min(item.a.y, item.b.y); elevationCtx.strokeRect(x, y, Math.abs(item.b.x - item.a.x), Math.abs(item.b.y - item.a.y)); } else { elevationCtx.beginPath(); elevationCtx.moveTo(item.a.x, item.a.y); elevationCtx.lineTo(item.b.x, item.b.y); elevationCtx.stroke(); } }
+  elevationCtx.restore();
+  if (preview && item.type === 'line') drawElevationPreviewLength(item);
+  if (selected) drawElevationHandles(item);
+}
+function drawElevationHandle(point) { const screen = elevationToScreen(point); elevationCtx.save(); elevationCtx.beginPath(); elevationCtx.arc(screen.x, screen.y, 6, 0, Math.PI * 2); elevationCtx.fillStyle = '#fffdf8'; elevationCtx.fill(); elevationCtx.lineWidth = 2; elevationCtx.strokeStyle = '#b54b2d'; elevationCtx.stroke(); elevationCtx.restore(); }
+function drawElevationHandles(item) { if (item.type === 'text') drawElevationHandle({ x: item.x, y: item.y }); else { drawElevationHandle(item.a); drawElevationHandle(item.b); } }
+function drawElevation() {
+  if (!elevationCanvas || !elevationCtx) return;
+  const width = elevationCanvas.width / elevationState.dpr, height = elevationCanvas.height / elevationState.dpr;
+  elevationCtx.setTransform(elevationState.dpr, 0, 0, elevationState.dpr, 0, 0); elevationCtx.clearRect(0, 0, width, height); elevationCtx.fillStyle = '#f1eee6'; elevationCtx.fillRect(0, 0, width, height); drawElevationGrid(width, height);
+  const view = currentElevation(); elevationCtx.save(); elevationCtx.translate(view.offset.x, view.offset.y); elevationCtx.scale(view.zoom, view.zoom); elevationCtx.strokeStyle = '#9c988f'; elevationCtx.lineWidth = 2 / view.zoom; elevationCtx.beginPath(); elevationCtx.moveTo(-10000, 0); elevationCtx.lineTo(10000, 0); elevationCtx.stroke(); elevationCtx.restore();
+  view.items.forEach((item, index) => drawElevationItem(item, false, elevationState.selected === index));
+  if (elevationState.drawing?.item) drawElevationItem(elevationState.drawing.item, true, false);
+}
+
+function elevationItemName(item) { return item.type === 'dimension' ? 'Dimension' : item.type === 'rect' ? 'Rectangle' : item.type === 'text' ? 'Text' : 'Line'; }
+function elevationItemDetail(item) { if (item.type === 'text') return item.text; if (item.type === 'rect') return `${formatLength(elevationPixelsToInches(Math.abs(item.b.x - item.a.x)))} × ${formatLength(elevationPixelsToInches(Math.abs(item.b.y - item.a.y)))}`; return formatLength(elevationPixelsToInches(Math.hypot(item.b.x - item.a.x, item.b.y - item.a.y))); }
+function renderElevationList() {
+  const list = $('#elevationList'); if (!list) return; list.replaceChildren(); const items = currentElevation().items;
+  if (!items.length) { const empty = document.createElement('li'); empty.className = 'empty-list'; empty.textContent = 'Draw elevation lines, dimensions, rectangles, or labels.'; list.append(empty); }
+  else items.forEach((item, index) => { const li = document.createElement('li'), name = document.createElement('span'), detail = document.createElement('strong'); name.textContent = `${elevationItemName(item)} ${index + 1}`; detail.textContent = elevationItemDetail(item); li.append(name, detail); li.addEventListener('click', () => { setElevationTool('select'); elevationState.selected = index; updateElevationUi(); drawElevation(); }); list.append(li); });
+  $('#elevItemCount').textContent = `${items.length} item${items.length === 1 ? '' : 's'}`;
+}
+function updateElevationUi() {
+  if (!elevationCanvas) return;
+  $('#elevationViewSelect').value = elevationState.currentView; $('#elevGridSize').value = String(currentElevation().gridInches); $('#elevZoomLabel').textContent = `${Math.round(currentElevation().zoom * 100)}%`;
+  $('#elevColor').value = elevationState.color; $('#elevColorValue').textContent = elevationState.color; $('#elevLineWidth').value = String(elevationState.lineWidth); $('#elevLineWidthValue').textContent = `${elevationState.lineWidth} px`; $('#elevTextSize').value = String(elevationState.textSize); $('#elevTextSizeValue').textContent = `${elevationState.textSize} px`;
+  const selected = currentElevation().items[elevationState.selected];
+  if (selected) { if (selected.color) { $('#elevColor').value = normalizeColor(selected.color, ELEVATION_DEFAULT_COLOR); $('#elevColorValue').textContent = $('#elevColor').value; } if (selected.width) { $('#elevLineWidth').value = String(selected.width); $('#elevLineWidthValue').textContent = `${selected.width} px`; } if (selected.fontSize) { $('#elevTextSize').value = String(selected.fontSize); $('#elevTextSizeValue').textContent = `${selected.fontSize} px`; } }
+  const lengthInfo = selectedElevationLengthInfo(), lengthInput = $('#elevLength'), lengthLabel = $('#elevLengthLabel');
+  if (lengthInput) { lengthInput.disabled = !lengthInfo; lengthInput.value = lengthInfo?.length || ''; }
+  if (lengthLabel) lengthLabel.textContent = lengthInfo?.label || 'Selected line length (ft)';
+  const undoButton = $('#elevUndoButton'), redoButton = $('#elevRedoButton');
+  if (undoButton) undoButton.disabled = !elevationState.history.length;
+  if (redoButton) redoButton.disabled = !elevationState.future.length;
+  renderElevationList();
+}
+function setElevationTool(tool) {
+  elevationState.tool = tool; elevationState.drawing = null; elevationState.dragging = null;
+  document.querySelectorAll('[data-elev-tool]').forEach((button) => button.classList.toggle('active', button.dataset.elevTool === tool));
+  const help = { line: ['Line tool', 'Drag to draw walls, roof lines, trim, and elevation outlines'], rect: ['Rectangle tool', 'Drag to draw windows, doors, garage doors, and wall blocks'], dimension: ['Dimension tool', 'Drag between two points to add a measurement'], text: ['Text tool', 'Click to add a label'], select: ['Select tool', 'Drag items to move; drag line endpoints or rectangle corners to edit'], erase: ['Erase tool', 'Click an elevation item to remove it'], pan: ['Pan tool', 'Drag to move the elevation sheet'] }[tool];
+  $('#elevModeLabel').textContent = help[0]; $('#elevModeHelp').textContent = help[1]; elevationCanvas.style.cursor = tool === 'pan' ? 'grab' : tool === 'select' ? 'pointer' : 'crosshair'; updateElevationUi(); drawElevation();
+}
+
+function elevationPointDistance(point, a, b) { return pointToSegmentDistance(point, a, b); }
+function elevationTextHit(item, point) { elevationCtx.save(); elevationCtx.font = `600 ${item.fontSize || 14}px "DM Sans", sans-serif`; const width = elevationCtx.measureText(item.text).width; elevationCtx.restore(); return Math.abs(point.x - item.x) <= width / 2 + 8 && Math.abs(point.y - item.y) <= (item.fontSize || 14) / 2 + 8; }
+function elevationItemPart(index, event) {
+  const item = currentElevation().items[index], point = elevationRawPoint(event), tol = 12 / currentElevation().zoom;
+  if (!item) return null; if (item.type === 'text') return elevationTextHit(item, point) ? 'body' : null;
+  if (Math.hypot(point.x - item.a.x, point.y - item.a.y) <= tol) return 'a'; if (Math.hypot(point.x - item.b.x, point.y - item.b.y) <= tol) return 'b';
+  if (item.type === 'dimension') {
+    const screen = elevationScreenPoint(event), labelPosition = elevationToScreen(elevationDimensionLabelPosition(item));
+    elevationCtx.save(); elevationCtx.font = '600 12px "DM Sans", sans-serif'; const labelWidth = elevationCtx.measureText(formatLength(elevationPixelsToInches(Math.hypot(item.b.x - item.a.x, item.b.y - item.a.y)))).width + 12; elevationCtx.restore();
+    if (Math.abs(screen.x - labelPosition.x) <= labelWidth / 2 && Math.abs(screen.y - labelPosition.y) <= 12) return 'label';
+  }
+  if (item.type === 'rect') { const x1 = Math.min(item.a.x, item.b.x), x2 = Math.max(item.a.x, item.b.x), y1 = Math.min(item.a.y, item.b.y), y2 = Math.max(item.a.y, item.b.y); return point.x >= x1 - tol && point.x <= x2 + tol && point.y >= y1 - tol && point.y <= y2 + tol ? 'body' : null; }
+  return elevationPointDistance(point, item.a, item.b) <= tol ? 'body' : null;
+}
+function elevationItemAt(event) { for (let i = currentElevation().items.length - 1; i >= 0; i -= 1) { const part = elevationItemPart(i, event); if (part) return { index: i, part }; } return null; }
+function moveElevationItem(item, dx, dy) { if (item.type === 'text') { item.x += dx; item.y += dy; } else { item.a = { x: item.a.x + dx, y: item.a.y + dy }; item.b = { x: item.b.x + dx, y: item.b.y + dy }; } }
+
+function beginElevationPan(event) { elevationState.panning = true; elevationState.panPointer = elevationScreenPoint(event); elevationCanvas.setPointerCapture(event.pointerId); elevationCanvas.style.cursor = 'grabbing'; }
+elevationCanvas?.addEventListener('pointerdown', (event) => {
+  if (event.button === 1 || elevationState.tool === 'pan' || elevationState.spacePressed) { event.preventDefault(); beginElevationPan(event); return; }
+  if (event.button !== 0) return; const point = elevationSnapPoint(event), view = currentElevation();
+  if (elevationState.tool === 'text') { const text = prompt('Enter elevation label:'); if (text && text.trim()) { pushElevationHistory(); view.items.push({ type: 'text', text: text.trim().slice(0, 200), x: point.x, y: point.y, color: elevationState.color, fontSize: elevationState.textSize }); elevationState.selected = view.items.length - 1; markDirty(); persist(); updateElevationUi(); drawElevation(); } return; }
+  if (elevationState.tool === 'select') { const hit = elevationItemAt(event); elevationState.selected = hit?.index ?? null; if (hit) { elevationState.dragging = hit.part; elevationState.dragSnapshot = elevationSnapshot(); elevationState.dragStart = hit.part === 'label' ? elevationRawPoint(event) : point; elevationState.dragOriginal = structuredClone(view.items[hit.index]); elevationCanvas.setPointerCapture(event.pointerId); elevationCanvas.style.cursor = 'grabbing'; } updateElevationUi(); drawElevation(); return; }
+  if (elevationState.tool === 'erase') { const hit = elevationItemAt(event); if (hit) { pushElevationHistory(); view.items.splice(hit.index, 1); elevationState.selected = null; markDirty(); persist(); updateElevationUi(); drawElevation(); } return; }
+  const type = elevationState.tool === 'rect' ? 'rect' : elevationState.tool === 'dimension' ? 'dimension' : 'line';
+  elevationState.drawing = { type, start: point, item: { type, a: point, b: point, color: elevationState.color, width: elevationState.lineWidth } }; elevationCanvas.setPointerCapture(event.pointerId);
+});
+elevationCanvas?.addEventListener('pointermove', (event) => {
+  const view = currentElevation();
+  if (elevationState.panning) { const point = elevationScreenPoint(event); view.offset.x += point.x - elevationState.panPointer.x; view.offset.y += point.y - elevationState.panPointer.y; elevationState.panPointer = point; drawElevation(); return; }
+  if (elevationState.dragging && elevationState.selected !== null) { const point = elevationSnapPoint(event), item = view.items[elevationState.selected]; Object.assign(item, structuredClone(elevationState.dragOriginal)); if (elevationState.dragging === 'body') moveElevationItem(item, point.x - elevationState.dragStart.x, point.y - elevationState.dragStart.y); else if (elevationState.dragging === 'label' && item.type === 'dimension') { const raw = elevationRawPoint(event), midpoint = { x: (item.a.x + item.b.x) / 2, y: (item.a.y + item.b.y) / 2 }; item.labelOffset = { x: raw.x - midpoint.x, y: raw.y - midpoint.y }; } else item[elevationState.dragging] = point; renderElevationList(); drawElevation(); return; }
+  if (!elevationState.drawing) return; let point = elevationSnapPoint(event); if (event.shiftKey && elevationState.drawing.type !== 'rect') { const start = elevationState.drawing.start, dx = Math.abs(point.x - start.x), dy = Math.abs(point.y - start.y); point = dx > dy ? { x: point.x, y: start.y } : { x: start.x, y: point.y }; } elevationState.drawing.item = { ...elevationState.drawing.item, b: point }; drawElevation();
+});
+function endElevationPointer() {
+  const view = currentElevation();
+  if (elevationState.panning) { elevationState.panning = false; elevationState.panPointer = null; markDirty(); persist(); elevationCanvas.style.cursor = elevationState.tool === 'pan' ? 'grab' : 'crosshair'; return; }
+  if (elevationState.dragging && elevationState.selected !== null) { if (JSON.stringify(elevationState.views) !== JSON.stringify(elevationState.dragSnapshot)) { pushElevationHistory(elevationState.dragSnapshot); markDirty(); persist(); } elevationState.dragging = null; elevationState.dragSnapshot = null; elevationState.dragStart = null; elevationState.dragOriginal = null; updateElevationUi(); drawElevation(); return; }
+  if (elevationState.drawing) { const item = elevationState.drawing.item; if (!samePoint(item.a, item.b)) { pushElevationHistory(); view.items.push(item); elevationState.selected = view.items.length - 1; markDirty(); persist(); updateElevationUi(); } elevationState.drawing = null; drawElevation(); }
+}
+elevationCanvas?.addEventListener('pointerup', endElevationPointer); elevationCanvas?.addEventListener('pointercancel', endElevationPointer);
+elevationCanvas?.addEventListener('wheel', (event) => { event.preventDefault(); const view = currentElevation(), anchor = elevationScreenPoint(event), world = { x: (anchor.x - view.offset.x) / view.zoom, y: (anchor.y - view.offset.y) / view.zoom }; const delta = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? window.innerHeight : 1); const nextZoom = Math.max(.1, Math.min(2, view.zoom * Math.exp(-delta * .001))); view.offset = { x: anchor.x - world.x * nextZoom, y: anchor.y - world.y * nextZoom }; view.zoom = nextZoom; markDirty(); persist(); updateElevationUi(); drawElevation(); }, { passive: false });
+elevationCanvas?.addEventListener('contextmenu', (event) => event.preventDefault());
+
+$('#floorPageButton')?.addEventListener('click', () => setWorkspacePage('floor'));
+$('#elevationPageButton')?.addEventListener('click', () => setWorkspacePage('elevation'));
+function setWorkspacePage(page) { const elevation = page === 'elevation'; $('#floorWorkspace').hidden = elevation; $('#elevationWorkspace').hidden = !elevation; $('#floorPageButton').classList.toggle('active', !elevation); $('#elevationPageButton').classList.toggle('active', elevation); elevation ? resizeElevation() : resize(); }
+function elevationPageActive() { return $('#elevationWorkspace') && !$('#elevationWorkspace').hidden; }
+document.querySelectorAll('[data-elev-tool]').forEach((button) => button.addEventListener('click', () => setElevationTool(button.dataset.elevTool)));
+$('#elevationViewSelect')?.addEventListener('change', (event) => { elevationState.currentView = event.target.value; elevationState.selected = null; markDirty(); persist(); updateElevationUi(); resizeElevation(); drawElevation(); });
+$('#elevGridSize')?.addEventListener('change', (event) => { const view = currentElevation(), old = elevationGridPixels(); pushElevationHistory(); view.gridInches = Number(event.target.value); const scale = elevationGridPixels() / old; view.items = view.items.map((item) => item.type === 'text' ? { ...item, x: item.x * scale, y: item.y * scale } : { ...item, a: { x: item.a.x * scale, y: item.a.y * scale }, b: { x: item.b.x * scale, y: item.b.y * scale }, ...(item.labelOffset ? { labelOffset: { x: item.labelOffset.x * scale, y: item.labelOffset.y * scale } } : {}) }); markDirty(); persist(); updateElevationUi(); drawElevation(); });
+$('#elevLength')?.addEventListener('change', (event) => applyElevationSelectedLength(event.target.value));
+function beginElevationStyleHistory(item) { if (item && !elevationState.styleSnapshot) elevationState.styleSnapshot = elevationSnapshot(); }
+function commitElevationStyleChange() { if (!elevationState.styleSnapshot) return; if (JSON.stringify(elevationState.views) !== JSON.stringify(elevationState.styleSnapshot)) pushElevationHistory(elevationState.styleSnapshot); elevationState.styleSnapshot = null; markDirty(); persist(); updateElevationUi(); drawElevation(); }
+$('#elevColor')?.addEventListener('input', (event) => { elevationState.color = normalizeColor(event.target.value, ELEVATION_DEFAULT_COLOR); const item = currentElevation().items[elevationState.selected]; beginElevationStyleHistory(item); if (item) item.color = elevationState.color; markDirty(); persist(); updateElevationUi(); drawElevation(); });
+$('#elevLineWidth')?.addEventListener('input', (event) => { elevationState.lineWidth = Number(event.target.value); const item = currentElevation().items[elevationState.selected]; beginElevationStyleHistory(item && item.type !== 'text' ? item : null); if (item && item.type !== 'text') item.width = elevationState.lineWidth; markDirty(); persist(); updateElevationUi(); drawElevation(); });
+$('#elevTextSize')?.addEventListener('input', (event) => { elevationState.textSize = Number(event.target.value); const item = currentElevation().items[elevationState.selected]; beginElevationStyleHistory(item?.type === 'text' ? item : null); if (item?.type === 'text') item.fontSize = elevationState.textSize; markDirty(); persist(); updateElevationUi(); drawElevation(); });
+$('#elevColor')?.addEventListener('change', commitElevationStyleChange);
+$('#elevLineWidth')?.addEventListener('change', commitElevationStyleChange);
+$('#elevTextSize')?.addEventListener('change', commitElevationStyleChange);
+$('#elevZoomIn')?.addEventListener('click', () => { currentElevation().zoom = Math.min(2, currentElevation().zoom + .25); markDirty(); persist(); updateElevationUi(); drawElevation(); });
+$('#elevZoomOut')?.addEventListener('click', () => { currentElevation().zoom = Math.max(.1, currentElevation().zoom - .25); markDirty(); persist(); updateElevationUi(); drawElevation(); });
+$('#elevUndoButton')?.addEventListener('click', undoElevation);
+$('#elevRedoButton')?.addEventListener('click', redoElevation);
+$('#clearElevationButton')?.addEventListener('click', () => { const view = currentElevation(); if (!view.items.length || !confirm('Clear this elevation view?')) return; pushElevationHistory(); view.items = []; elevationState.selected = null; markDirty(); persist(); updateElevationUi(); drawElevation(); });
+window.addEventListener('keydown', (event) => {
+  if (!elevationPageActive()) return;
+  const key = event.key.toLowerCase();
+  if ((event.ctrlKey || event.metaKey) && key === 'z') { event.preventDefault(); event.shiftKey ? redoElevation() : undoElevation(); return; }
+  if ((event.ctrlKey || event.metaKey) && key === 'y') { event.preventDefault(); redoElevation(); return; }
+  if (event.code === 'Space' && !event.repeat) { elevationState.spacePressed = true; elevationCanvas.style.cursor = 'grab'; event.preventDefault(); }
+  if (key === 'l') setElevationTool('line'); if (key === 'r') setElevationTool('rect'); if (key === 'd') setElevationTool('dimension'); if (key === 't') setElevationTool('text'); if (key === 'v') setElevationTool('select'); if (key === 'e') setElevationTool('erase'); if (key === 'p') setElevationTool('pan');
+  if ((event.key === 'Delete' || event.key === 'Backspace') && elevationState.selected !== null) { pushElevationHistory(); currentElevation().items.splice(elevationState.selected, 1); elevationState.selected = null; markDirty(); persist(); updateElevationUi(); drawElevation(); }
+  if (event.key === 'Escape') { elevationState.selected = null; updateElevationUi(); drawElevation(); }
+});
+window.addEventListener('keyup', (event) => { if (event.code === 'Space') { elevationState.spacePressed = false; if (elevationPageActive()) setElevationTool(elevationState.tool); } });
+elevationReady = true;
+new ResizeObserver(resizeElevation).observe(elevationShell);
+updateElevationUi(); resizeElevation(); setElevationTool('line');

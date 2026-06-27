@@ -35,6 +35,8 @@ const state = {
   shapeDragMode: null, shapeDragSnapshot: null, shapeDragStart: null, shapeDragOriginal: null,
   objectKind: 'car', selectedObject: null, objectDragMode: null, objectDragSnapshot: null, objectDragStart: null, objectDragOriginal: null,
   wallSizeSnapshot: null, lineStyleSnapshot: null,
+  selectMode: 'single', multiSelected: { walls: [], labels: [], rulers: [], shapes: [], objects: [] }, boxSelecting: false, boxStart: null, boxCurrent: null,
+  multiDragSnapshot: null, multiDragStart: null, multiDragSelection: null, floorClipboard: null,
   serverId: saved.server?.id || null, serverName: saved.server?.name || 'Untitled plan',
   dirty: saved.localState?.dirty === true,
   zoom: Number(saved.viewport?.zoom) || 1,
@@ -129,7 +131,9 @@ function drawWall(wall, preview = false, selected = false) {
   ctx.lineCap = 'square'; ctx.lineJoin = 'miter';
   ctx.strokeStyle = preview ? '#b54b2d' : normalizeColor(wall.color, DEFAULT_WALL_COLOR); ctx.globalAlpha = preview ? .65 : normalizeShade(wall.shade);
   ctx.lineWidth = Math.max(2, (wall.thickness || state.wallWidth) / state.gridInches * state.grid);
-  ctx.beginPath(); ctx.moveTo(wall.a.x, wall.a.y); ctx.lineTo(wall.b.x, wall.b.y); ctx.stroke(); ctx.restore();
+  ctx.beginPath(); ctx.moveTo(wall.a.x, wall.a.y); ctx.lineTo(wall.b.x, wall.b.y); ctx.stroke();
+  if (selected && !preview) { ctx.globalAlpha = 1; ctx.strokeStyle = '#b54b2d'; ctx.lineWidth = Math.max(3 / state.zoom, ctx.lineWidth + 2 / state.zoom); ctx.setLineDash([8 / state.zoom, 5 / state.zoom]); ctx.beginPath(); ctx.moveTo(wall.a.x, wall.a.y); ctx.lineTo(wall.b.x, wall.b.y); ctx.stroke(); }
+  ctx.restore();
   if (preview) drawWallPreviewLength(wall);
 }
 
@@ -358,16 +362,17 @@ function draw() {
   const width = canvas.width / state.dpr, height = canvas.height / state.dpr;
   ctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0); ctx.clearRect(0, 0, width, height);
   ctx.fillStyle = '#e7e3d8'; ctx.fillRect(0, 0, width, height); drawGrid(width, height);
-  state.shapes.forEach((shape, index) => drawShape(shape, false, state.tool === 'shapes' && index === state.selectedShape));
-  state.objects.forEach((object, index) => drawObject(object, state.tool === 'objects' && index === state.selectedObject));
-  state.walls.forEach((wall, index) => drawWall(wall, false, state.tool === 'edit' && index === state.selectedWall));
-  if (state.showText) state.labels.forEach((label, index) => drawLabel(label, state.tool === 'text' && index === state.selectedLabel));
-  if (state.showDimensions) state.rulers.forEach((ruler, index) => drawRuler(ruler, false, state.tool === 'ruler' && index === state.selectedRuler));
+  state.shapes.forEach((shape, index) => drawShape(shape, false, (state.tool === 'shapes' && index === state.selectedShape) || floorSelectionIncludes('shapes', index)));
+  state.objects.forEach((object, index) => drawObject(object, (state.tool === 'objects' && index === state.selectedObject) || floorSelectionIncludes('objects', index)));
+  state.walls.forEach((wall, index) => drawWall(wall, false, (state.tool === 'edit' && index === state.selectedWall) || floorSelectionIncludes('walls', index)));
+  if (state.showText) state.labels.forEach((label, index) => drawLabel(label, (state.tool === 'text' && index === state.selectedLabel) || floorSelectionIncludes('labels', index)));
+  if (state.showDimensions) state.rulers.forEach((ruler, index) => drawRuler(ruler, false, (state.tool === 'ruler' && index === state.selectedRuler) || floorSelectionIncludes('rulers', index)));
   if (state.preview) drawWall(state.preview, true);
   if (state.rulerPreview) drawRuler(state.rulerPreview, true);
   if (state.shapePreview) drawShape(state.shapePreview, true);
   if (state.tool === 'shapes' && state.selectedShape !== null && state.shapes[state.selectedShape]) drawShapeHandles(state.shapes[state.selectedShape]);
-  if (state.tool === 'edit' && state.selectedWall !== null && state.walls[state.selectedWall]) drawEditHandles(state.walls[state.selectedWall]);
+  if (state.tool === 'edit' && state.selectMode === 'single' && state.selectedWall !== null && state.walls[state.selectedWall]) drawEditHandles(state.walls[state.selectedWall]);
+  drawFloorSelectionBox();
 }
 
 function projectData() {
@@ -452,6 +457,29 @@ function shapeContainsPoint(shape, point) {
   return point.y <= shape.center.y + tolerance && point.x >= shape.center.x - shape.radius - tolerance && point.x <= shape.center.x + shape.radius + tolerance && point.y >= shape.center.y - shape.radius - tolerance;
 }
 
+function emptyFloorSelection() { return { walls: [], labels: [], rulers: [], shapes: [], objects: [] }; }
+function floorSelectionCount(selection = state.multiSelected) { return Object.values(selection).reduce((total, items) => total + items.length, 0); }
+function hasFloorMultiSelection() { return floorSelectionCount() > 0; }
+function clearFloorMultiSelection() { state.multiSelected = emptyFloorSelection(); }
+function clearFloorSingleSelection() { state.selectedWall = null; state.selectedLabel = null; state.selectedRuler = null; state.selectedShape = null; state.selectedObject = null; }
+function floorSelectionIncludes(kind, index) { return state.multiSelected[kind]?.includes(index); }
+function normalizedRect(a, b) { return { x1: Math.min(a.x, b.x), y1: Math.min(a.y, b.y), x2: Math.max(a.x, b.x), y2: Math.max(a.y, b.y) }; }
+function boundsFromPoints(points) { return points.reduce((box, point) => ({ x1: Math.min(box.x1, point.x), y1: Math.min(box.y1, point.y), x2: Math.max(box.x2, point.x), y2: Math.max(box.y2, point.y) }), { x1: Infinity, y1: Infinity, x2: -Infinity, y2: -Infinity }); }
+function labelBounds(label) { const metrics = labelMetrics(label); return { x1: label.x - metrics.width / 2 - 7, y1: label.y - metrics.height / 2 - 4, x2: label.x + metrics.width / 2 + 7, y2: label.y + metrics.height / 2 + 4 }; }
+function shapeBounds(shape) { if (shape.a) return boundsFromPoints([shape.a, shape.b]); if (shape.type === 'semicircle') return { x1: shape.center.x - shape.radius, y1: shape.center.y - shape.radius, x2: shape.center.x + shape.radius, y2: shape.center.y }; return { x1: shape.center.x - shape.radius, y1: shape.center.y - shape.radius, x2: shape.center.x + shape.radius, y2: shape.center.y + shape.radius }; }
+function floorItemBounds(kind, item) { if (kind === 'walls' || kind === 'rulers') return boundsFromPoints([item.a, item.b]); if (kind === 'labels') return labelBounds(item); if (kind === 'shapes') return shapeBounds(item); if (kind === 'objects') return objectBounds(item); return null; }
+function rectContainsBounds(rect, bounds) { return bounds && bounds.x1 >= rect.x1 && bounds.y1 >= rect.y1 && bounds.x2 <= rect.x2 && bounds.y2 <= rect.y2; }
+function selectFloorItemsInRect(a, b) { const rect = normalizedRect(a, b), selection = emptyFloorSelection(); state.walls.forEach((item, index) => { if (rectContainsBounds(rect, floorItemBounds('walls', item))) selection.walls.push(index); }); state.labels.forEach((item, index) => { if (rectContainsBounds(rect, floorItemBounds('labels', item))) selection.labels.push(index); }); state.rulers.forEach((item, index) => { if (rectContainsBounds(rect, floorItemBounds('rulers', item))) selection.rulers.push(index); }); state.shapes.forEach((item, index) => { if (rectContainsBounds(rect, floorItemBounds('shapes', item))) selection.shapes.push(index); }); state.objects.forEach((item, index) => { if (rectContainsBounds(rect, floorItemBounds('objects', item))) selection.objects.push(index); }); return selection; }
+function drawFloorSelectionBox() { if (!state.boxSelecting || !state.boxStart || !state.boxCurrent) return; const a = screenFromWorld(state.boxStart), b = screenFromWorld(state.boxCurrent), rect = normalizedRect(a, b); ctx.save(); ctx.fillStyle = 'rgba(181,75,45,.12)'; ctx.strokeStyle = '#b54b2d'; ctx.lineWidth = 1.5; ctx.setLineDash([6, 4]); ctx.fillRect(rect.x1, rect.y1, rect.x2 - rect.x1, rect.y2 - rect.y1); ctx.strokeRect(rect.x1, rect.y1, rect.x2 - rect.x1, rect.y2 - rect.y1); ctx.restore(); }
+function floorSelectedItemAtEvent(event) { const raw = rawCanvasPoint(event); const objectIndex = objectAtPoint(raw); if (state.multiSelected.objects.includes(objectIndex)) return true; const labelIndex = labelAtPoint(raw); if (state.multiSelected.labels.includes(labelIndex)) return true; if (state.multiSelected.shapes.some((index) => state.shapes[index] && shapePartAtEvent(event, state.shapes[index]))) return true; if (state.multiSelected.rulers.some((index) => state.rulers[index] && rulerPartAtEvent(event, state.rulers[index]))) return true; return state.multiSelected.walls.some((index) => state.walls[index] && pointToSegmentDistance(raw, state.walls[index].a, state.walls[index].b) < 18 / state.zoom); }
+function moveFloorSelectionBy(selection, dx, dy) { selection.walls.forEach((index) => { const item = state.walls[index]; if (item) { item.a = { x: item.a.x + dx, y: item.a.y + dy }; item.b = { x: item.b.x + dx, y: item.b.y + dy }; } }); selection.labels.forEach((index) => { const item = state.labels[index]; if (item) { item.x += dx; item.y += dy; } }); selection.rulers.forEach((index) => { const item = state.rulers[index]; if (item) { item.a = { x: item.a.x + dx, y: item.a.y + dy }; item.b = { x: item.b.x + dx, y: item.b.y + dy }; } }); selection.shapes.forEach((index) => { const item = state.shapes[index]; if (item) moveShape(item, dx, dy); }); selection.objects.forEach((index) => { const item = state.objects[index]; if (item) { item.x += dx; item.y += dy; } }); }
+function offsetFloorItem(kind, item, offset) { const clone = structuredClone(item); if (kind === 'walls' || kind === 'rulers') { clone.a = { x: clone.a.x + offset, y: clone.a.y + offset }; clone.b = { x: clone.b.x + offset, y: clone.b.y + offset }; } else if (kind === 'labels') { clone.x += offset; clone.y += offset; } else if (kind === 'shapes') moveShape(clone, offset, offset); else if (kind === 'objects') { clone.x += offset; clone.y += offset; } return clone; }
+function singleFloorSelection() { const selection = emptyFloorSelection(); if (state.selectedWall !== null && state.walls[state.selectedWall]) selection.walls.push(state.selectedWall); if (state.selectedLabel !== null && state.labels[state.selectedLabel]) selection.labels.push(state.selectedLabel); if (state.selectedRuler !== null && state.rulers[state.selectedRuler]) selection.rulers.push(state.selectedRuler); if (state.selectedShape !== null && state.shapes[state.selectedShape]) selection.shapes.push(state.selectedShape); if (state.selectedObject !== null && state.objects[state.selectedObject]) selection.objects.push(state.selectedObject); return selection; }
+function copyFloorSelection() { const selection = hasFloorMultiSelection() ? state.multiSelected : singleFloorSelection(); if (!floorSelectionCount(selection)) return false; state.floorClipboard = { walls: selection.walls.map((index) => structuredClone(state.walls[index])), labels: selection.labels.map((index) => structuredClone(state.labels[index])), rulers: selection.rulers.map((index) => structuredClone(state.rulers[index])), shapes: selection.shapes.map((index) => structuredClone(state.shapes[index])), objects: selection.objects.map((index) => structuredClone(state.objects[index])) }; return true; }
+function pasteFloorClipboard() { const clip = state.floorClipboard; if (!clip || !Object.values(clip).some((items) => items.length)) return false; const snapshot = documentSnapshot(), offset = state.grid * 2, selection = emptyFloorSelection(); clip.walls.forEach((item) => { selection.walls.push(state.walls.push(offsetFloorItem('walls', item, offset)) - 1); }); clip.labels.forEach((item) => { selection.labels.push(state.labels.push(offsetFloorItem('labels', item, offset)) - 1); }); clip.rulers.forEach((item) => { selection.rulers.push(state.rulers.push(offsetFloorItem('rulers', item, offset)) - 1); }); clip.shapes.forEach((item) => { selection.shapes.push(state.shapes.push(offsetFloorItem('shapes', item, offset)) - 1); }); clip.objects.forEach((item) => { selection.objects.push(state.objects.push(offsetFloorItem('objects', item, offset)) - 1); }); pushHistory(snapshot); markDirty(); persist(); setTool('edit'); state.selectMode = 'highlight'; clearFloorSingleSelection(); state.multiSelected = selection; syncSelectModeUi(); updateUi(); draw(); return true; }
+function deleteFloorSelection() { const selection = hasFloorMultiSelection() ? state.multiSelected : singleFloorSelection(); if (!floorSelectionCount(selection)) return false; const snapshot = documentSnapshot(), omit = (items, selected) => { const set = new Set(selected); return items.filter((_, index) => !set.has(index)); }; state.walls = omit(state.walls, selection.walls); state.labels = omit(state.labels, selection.labels); state.rulers = omit(state.rulers, selection.rulers); state.shapes = omit(state.shapes, selection.shapes); state.objects = omit(state.objects, selection.objects); clearFloorSingleSelection(); clearFloorMultiSelection(); pushHistory(snapshot); markDirty(); persist(); updateUi(); draw(); return true; }
+function syncSelectModeUi() { const palette = $('#selectPalette'); if (palette) palette.hidden = state.tool !== 'edit'; document.querySelectorAll('[data-select-mode]').forEach((button) => button.classList.toggle('active', button.dataset.selectMode === state.selectMode)); }
+function isTypingTarget(target) { return target && (['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) || target.isContentEditable); }
 function shapeTypeLabel(shape) { return shape.type === 'semicircle' ? 'semi-circle' : shape.type; }
 
 function shapeSizeText(shape) {
@@ -859,7 +887,7 @@ function setTool(tool) {
   state.drawingShape = false; state.shapeStart = null; state.shapePreview = null;
   state.shapeDragMode = null; state.shapeDragSnapshot = null; state.shapeDragStart = null; state.shapeDragOriginal = null;
   state.objectDragMode = null; state.objectDragSnapshot = null; state.objectDragStart = null; state.objectDragOriginal = null;
-  if (tool !== 'edit') state.selectedWall = null;
+  if (tool !== 'edit') { state.selectedWall = null; clearFloorMultiSelection(); state.selectMode = 'single'; }
   if (tool !== 'shapes') state.selectedShape = null;
   if (tool !== 'objects') state.selectedObject = null;
   if (tool !== 'text') state.selectedLabel = null;
@@ -867,10 +895,11 @@ function setTool(tool) {
   state.tool = tool;
   $('#shapePalette').hidden = tool !== 'shapes';
   $('#objectPalette').hidden = tool !== 'objects';
+  syncSelectModeUi();
   document.querySelectorAll('[data-tool]').forEach((button) => button.classList.toggle('active', button.dataset.tool === tool));
   const content = {
     wall: ['Wall tool', 'Drag between grid points · Hold Shift for a straight wall'],
-    edit: ['Edit tool', 'Select a wall, then drag either endpoint'],
+    edit: [state.selectMode === 'highlight' ? 'Highlight Select' : 'Select tool', state.selectMode === 'highlight' ? 'Drag a box around complete items; drag a highlighted item to move the group' : 'Select one wall, then drag either endpoint'],
     ruler: ['Ruler tool', 'Drag to measure; select and drag a line, endpoint, or label'],
     shapes: ['Shapes tool', 'Choose a shape, then drag on the canvas; selected shapes can be moved or resized'],
     objects: ['Objects tool', 'Choose a car or person; click to insert, then drag to move or resize'],
@@ -882,11 +911,11 @@ function setTool(tool) {
 
 function undo() {
   if (!state.history.length) return; state.future.push(documentSnapshot());
-  restoreSnapshot(state.history.pop()); state.selectedWall = null; state.selectedLabel = null; state.selectedRuler = null; state.selectedShape = null; state.selectedObject = null; markDirty(); persist(); draw(); updateUi();
+  restoreSnapshot(state.history.pop()); state.selectedWall = null; state.selectedLabel = null; state.selectedRuler = null; state.selectedShape = null; state.selectedObject = null; clearFloorMultiSelection(); markDirty(); persist(); draw(); updateUi();
 }
 function redo() {
   if (!state.future.length) return; state.history.push(documentSnapshot());
-  restoreSnapshot(state.future.pop()); state.selectedWall = null; state.selectedLabel = null; state.selectedRuler = null; state.selectedShape = null; state.selectedObject = null; markDirty(); persist(); draw(); updateUi();
+  restoreSnapshot(state.future.pop()); state.selectedWall = null; state.selectedLabel = null; state.selectedRuler = null; state.selectedShape = null; state.selectedObject = null; clearFloorMultiSelection(); markDirty(); persist(); draw(); updateUi();
 }
 
 function downloadJson() {
@@ -1016,6 +1045,11 @@ function requestNewProject() {
 }
 
 document.querySelectorAll('[data-tool]').forEach((button) => button.addEventListener('click', () => setTool(button.dataset.tool)));
+document.querySelectorAll('[data-select-mode]').forEach((button) => button.addEventListener('click', () => {
+  state.selectMode = button.dataset.selectMode; if (state.selectMode === 'single') clearFloorMultiSelection(); else clearFloorSingleSelection();
+  document.querySelectorAll('[data-select-mode]').forEach((choice) => choice.classList.toggle('active', choice === button));
+  setTool('edit'); updateUi(); draw();
+}));
 document.querySelectorAll('[data-shape]').forEach((button) => button.addEventListener('click', () => {
   state.shapeKind = button.dataset.shape;
   document.querySelectorAll('[data-shape]').forEach((choice) => choice.classList.toggle('active', choice === button));
@@ -1141,7 +1175,34 @@ window.addEventListener('blur', () => { state.spacePressed = false; if (!state.p
 window.addEventListener('beforeunload', (event) => { if (state.dirty) { event.preventDefault(); event.returnValue = ''; } });
 canvas.addEventListener('wheel', handleWheelZoom, { passive: false });
 canvas.addEventListener('contextmenu', (event) => event.preventDefault());
-new ResizeObserver(resize).observe(shell);
+function handleFloorHighlightPointerDown(event) {
+  if (elevationPageActive() || state.tool !== 'edit' || state.selectMode !== 'highlight' || event.button !== 0 || state.spacePressed) return;
+  event.preventDefault(); event.stopImmediatePropagation();
+  const point = canvasPoint(event);
+  if (hasFloorMultiSelection() && floorSelectedItemAtEvent(event)) { state.multiDragSnapshot = documentSnapshot(); state.multiDragStart = point; state.multiDragSelection = structuredClone(state.multiSelected); canvas.setPointerCapture(event.pointerId); setCanvasCursor(); draw(); return; }
+  clearFloorSingleSelection(); state.boxSelecting = true; state.boxStart = rawCanvasPoint(event); state.boxCurrent = state.boxStart; canvas.setPointerCapture(event.pointerId); setCanvasCursor(); updateUi(); draw();
+}
+function handleFloorHighlightPointerMove(event) {
+  if (elevationPageActive()) return;
+  if (state.boxSelecting) { event.preventDefault(); event.stopImmediatePropagation(); state.boxCurrent = rawCanvasPoint(event); draw(); return; }
+  if (state.multiDragSnapshot && state.multiDragSelection) { event.preventDefault(); event.stopImmediatePropagation(); const point = canvasPoint(event), dx = point.x - state.multiDragStart.x, dy = point.y - state.multiDragStart.y; restoreSnapshot(state.multiDragSnapshot); moveFloorSelectionBy(state.multiDragSelection, dx, dy); renderWallList(); draw(); }
+}
+function handleFloorHighlightPointerEnd(event) {
+  if (elevationPageActive()) return;
+  if (state.boxSelecting) { event.preventDefault(); event.stopImmediatePropagation(); state.multiSelected = selectFloorItemsInRect(state.boxStart, state.boxCurrent || state.boxStart); state.boxSelecting = false; state.boxStart = null; state.boxCurrent = null; updateUi(); draw(); setCanvasCursor(); return; }
+  if (state.multiDragSnapshot && state.multiDragSelection) { event.preventDefault(); event.stopImmediatePropagation(); if (JSON.stringify(documentSnapshot()) !== JSON.stringify(state.multiDragSnapshot)) { pushHistory(state.multiDragSnapshot); markDirty(); persist(); } state.multiDragSnapshot = null; state.multiDragStart = null; state.multiDragSelection = null; updateUi(); draw(); setCanvasCursor(); }
+}
+canvas.addEventListener('pointerdown', handleFloorHighlightPointerDown, true);
+canvas.addEventListener('pointermove', handleFloorHighlightPointerMove, true);
+canvas.addEventListener('pointerup', handleFloorHighlightPointerEnd, true);
+canvas.addEventListener('pointercancel', handleFloorHighlightPointerEnd, true);
+window.addEventListener('keydown', (event) => {
+  if (elevationPageActive() || isTypingTarget(event.target)) return;
+  const key = event.key.toLowerCase();
+  if ((event.ctrlKey || event.metaKey) && key === 'c') { if (copyFloorSelection()) { event.preventDefault(); event.stopImmediatePropagation(); } return; }
+  if ((event.ctrlKey || event.metaKey) && key === 'v') { if (pasteFloorClipboard()) { event.preventDefault(); event.stopImmediatePropagation(); } return; }
+  if ((event.key === 'Delete' || event.key === 'Backspace') && deleteFloorSelection()) { event.preventDefault(); event.stopImmediatePropagation(); }
+}, true);new ResizeObserver(resize).observe(shell);
 updateUi(); resize(); setTool('wall'); persist();
 
 // Elevation workspace: a compact second drafting page for front/side/rear house elevations.
@@ -1178,7 +1239,8 @@ const elevationState = {
   currentView: elevationInitial.currentView,
   views: elevationInitial.views,
   tool: 'line', color: ELEVATION_DEFAULT_COLOR, lineWidth: 2, textSize: 14,
-  history: [], future: [], styleSnapshot: null,
+  history: [], future: [], styleSnapshot: null, selectMode: 'single', selection: [], boxSelecting: false, boxStart: null, boxCurrent: null,
+  multiDragSnapshot: null, multiDragStart: null, multiDragSelection: null, clipboard: null,
   selected: null, drawing: null, dragging: null, dragSnapshot: null, dragStart: null, dragOriginal: null,
   panning: false, panPointer: null, spacePressed: false, dpr: window.devicePixelRatio || 1,
 };
@@ -1295,8 +1357,9 @@ function drawElevation() {
   const width = elevationCanvas.width / elevationState.dpr, height = elevationCanvas.height / elevationState.dpr;
   elevationCtx.setTransform(elevationState.dpr, 0, 0, elevationState.dpr, 0, 0); elevationCtx.clearRect(0, 0, width, height); elevationCtx.fillStyle = '#f1eee6'; elevationCtx.fillRect(0, 0, width, height); drawElevationGrid(width, height);
   const view = currentElevation(); elevationCtx.save(); elevationCtx.translate(view.offset.x, view.offset.y); elevationCtx.scale(view.zoom, view.zoom); elevationCtx.strokeStyle = '#9c988f'; elevationCtx.lineWidth = 2 / view.zoom; elevationCtx.beginPath(); elevationCtx.moveTo(-10000, 0); elevationCtx.lineTo(10000, 0); elevationCtx.stroke(); elevationCtx.restore();
-  view.items.forEach((item, index) => drawElevationItem(item, false, elevationState.selected === index));
+  view.items.forEach((item, index) => drawElevationItem(item, false, elevationState.selected === index || elevationSelectionIncludes(index)));
   if (elevationState.drawing?.item) drawElevationItem(elevationState.drawing.item, true, false);
+  drawElevationSelectionBox();
 }
 
 function elevationItemName(item) { return item.type === 'dimension' ? 'Dimension' : item.type === 'rect' ? 'Rectangle' : item.type === 'text' ? 'Text' : 'Line'; }
@@ -1323,8 +1386,10 @@ function updateElevationUi() {
 }
 function setElevationTool(tool) {
   elevationState.tool = tool; elevationState.drawing = null; elevationState.dragging = null;
+  if (tool !== 'select') { elevationState.selected = null; clearElevationMultiSelection(); elevationState.selectMode = 'single'; }
   document.querySelectorAll('[data-elev-tool]').forEach((button) => button.classList.toggle('active', button.dataset.elevTool === tool));
-  const help = { line: ['Line tool', 'Drag to draw walls, roof lines, trim, and elevation outlines'], rect: ['Rectangle tool', 'Drag to draw windows, doors, garage doors, and wall blocks'], dimension: ['Dimension tool', 'Drag between two points to add a measurement'], text: ['Text tool', 'Click to add a label'], select: ['Select tool', 'Drag items to move; drag line endpoints or rectangle corners to edit'], erase: ['Erase tool', 'Click an elevation item to remove it'], pan: ['Pan tool', 'Drag to move the elevation sheet'] }[tool];
+  syncElevationSelectModeUi();
+  const help = { line: ['Line tool', 'Drag to draw walls, roof lines, trim, and elevation outlines'], rect: ['Rectangle tool', 'Drag to draw windows, doors, garage doors, and wall blocks'], dimension: ['Dimension tool', 'Drag between two points to add a measurement'], text: ['Text tool', 'Click to add a label'], select: [elevationState.selectMode === 'highlight' ? 'Highlight Select' : 'Select tool', elevationState.selectMode === 'highlight' ? 'Drag a box around complete items; drag a highlighted item to move the group' : 'Drag items to move; drag line endpoints or rectangle corners to edit'], erase: ['Erase tool', 'Click an elevation item to remove it'], pan: ['Pan tool', 'Drag to move the elevation sheet'] }[tool];
   $('#elevModeLabel').textContent = help[0]; $('#elevModeHelp').textContent = help[1]; elevationCanvas.style.cursor = tool === 'pan' ? 'grab' : tool === 'select' ? 'pointer' : 'crosshair'; updateElevationUi(); drawElevation();
 }
 
@@ -1345,6 +1410,22 @@ function elevationItemPart(index, event) {
 function elevationItemAt(event) { for (let i = currentElevation().items.length - 1; i >= 0; i -= 1) { const part = elevationItemPart(i, event); if (part) return { index: i, part }; } return null; }
 function moveElevationItem(item, dx, dy) { if (item.type === 'text') { item.x += dx; item.y += dy; } else { item.a = { x: item.a.x + dx, y: item.a.y + dy }; item.b = { x: item.b.x + dx, y: item.b.y + dy }; } }
 
+function elevationSelectionIncludes(index) { return elevationState.selection.includes(index); }
+function clearElevationMultiSelection() { elevationState.selection = []; }
+function hasElevationMultiSelection() { return elevationState.selection.length > 0; }
+function elevationItemBounds(item) {
+  if (item.type === 'text') { elevationCtx.save(); elevationCtx.font = `600 ${item.fontSize || 14}px "DM Sans", sans-serif`; const width = elevationCtx.measureText(item.text).width; elevationCtx.restore(); const height = (item.fontSize || 14) * 1.35; return { x1: item.x - width / 2 - 7, y1: item.y - height / 2 - 4, x2: item.x + width / 2 + 7, y2: item.y + height / 2 + 4 }; }
+  return boundsFromPoints([item.a, item.b]);
+}
+function selectElevationItemsInRect(a, b) { const rect = normalizedRect(a, b); return currentElevation().items.map((item, index) => rectContainsBounds(rect, elevationItemBounds(item)) ? index : null).filter((index) => index !== null); }
+function drawElevationSelectionBox() { if (!elevationState.boxSelecting || !elevationState.boxStart || !elevationState.boxCurrent) return; const a = elevationToScreen(elevationState.boxStart), b = elevationToScreen(elevationState.boxCurrent), rect = normalizedRect(a, b); elevationCtx.save(); elevationCtx.fillStyle = 'rgba(181,75,45,.12)'; elevationCtx.strokeStyle = '#b54b2d'; elevationCtx.lineWidth = 1.5; elevationCtx.setLineDash([6, 4]); elevationCtx.fillRect(rect.x1, rect.y1, rect.x2 - rect.x1, rect.y2 - rect.y1); elevationCtx.strokeRect(rect.x1, rect.y1, rect.x2 - rect.x1, rect.y2 - rect.y1); elevationCtx.restore(); }
+function elevationSelectedItemAtEvent(event) { const hit = elevationItemAt(event); return hit && elevationState.selection.includes(hit.index); }
+function moveElevationSelectionBy(selection, dx, dy) { const items = currentElevation().items; selection.forEach((index) => { if (items[index]) moveElevationItem(items[index], dx, dy); }); }
+function offsetElevationItem(item, offset) { const clone = structuredClone(item); if (clone.type === 'text') { clone.x += offset; clone.y += offset; } else { clone.a = { x: clone.a.x + offset, y: clone.a.y + offset }; clone.b = { x: clone.b.x + offset, y: clone.b.y + offset }; } return clone; }
+function copyElevationSelection() { const indices = hasElevationMultiSelection() ? elevationState.selection : elevationState.selected !== null ? [elevationState.selected] : []; if (!indices.length) return false; const items = currentElevation().items; elevationState.clipboard = indices.filter((index) => items[index]).map((index) => structuredClone(items[index])); return elevationState.clipboard.length > 0; }
+function pasteElevationClipboard() { if (!elevationState.clipboard?.length) return false; const snapshot = elevationSnapshot(), items = currentElevation().items, offset = elevationGridPixels() * 2, selection = []; elevationState.clipboard.forEach((item) => { selection.push(items.push(offsetElevationItem(item, offset)) - 1); }); pushElevationHistory(snapshot); markDirty(); persist(); setElevationTool('select'); elevationState.selectMode = 'highlight'; elevationState.selected = null; elevationState.selection = selection; syncElevationSelectModeUi(); updateElevationUi(); drawElevation(); return true; }
+function deleteElevationSelection() { const items = currentElevation().items, indices = hasElevationMultiSelection() ? elevationState.selection : elevationState.selected !== null ? [elevationState.selected] : []; if (!indices.length) return false; const snapshot = elevationSnapshot(), omit = new Set(indices); currentElevation().items = items.filter((_, index) => !omit.has(index)); elevationState.selected = null; clearElevationMultiSelection(); pushElevationHistory(snapshot); markDirty(); persist(); updateElevationUi(); drawElevation(); return true; }
+function syncElevationSelectModeUi() { const palette = $('#elevSelectPalette'); if (palette) palette.hidden = elevationState.tool !== 'select'; document.querySelectorAll('[data-elev-select-mode]').forEach((button) => button.classList.toggle('active', button.dataset.elevSelectMode === elevationState.selectMode)); }
 function beginElevationPan(event) { elevationState.panning = true; elevationState.panPointer = elevationScreenPoint(event); elevationCanvas.setPointerCapture(event.pointerId); elevationCanvas.style.cursor = 'grabbing'; }
 elevationCanvas?.addEventListener('pointerdown', (event) => {
   if (event.button === 1 || elevationState.tool === 'pan' || elevationState.spacePressed) { event.preventDefault(); beginElevationPan(event); return; }
@@ -1370,12 +1451,44 @@ function endElevationPointer() {
 elevationCanvas?.addEventListener('pointerup', endElevationPointer); elevationCanvas?.addEventListener('pointercancel', endElevationPointer);
 elevationCanvas?.addEventListener('wheel', (event) => { event.preventDefault(); const view = currentElevation(), anchor = elevationScreenPoint(event), world = { x: (anchor.x - view.offset.x) / view.zoom, y: (anchor.y - view.offset.y) / view.zoom }; const delta = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? window.innerHeight : 1); const nextZoom = Math.max(.1, Math.min(2, view.zoom * Math.exp(-delta * .001))); view.offset = { x: anchor.x - world.x * nextZoom, y: anchor.y - world.y * nextZoom }; view.zoom = nextZoom; markDirty(); persist(); updateElevationUi(); drawElevation(); }, { passive: false });
 elevationCanvas?.addEventListener('contextmenu', (event) => event.preventDefault());
-
+function handleElevationHighlightPointerDown(event) {
+  if (!elevationPageActive() || elevationState.tool !== 'select' || elevationState.selectMode !== 'highlight' || event.button !== 0 || elevationState.spacePressed) return;
+  event.preventDefault(); event.stopImmediatePropagation();
+  const point = elevationSnapPoint(event);
+  if (hasElevationMultiSelection() && elevationSelectedItemAtEvent(event)) { elevationState.multiDragSnapshot = elevationSnapshot(); elevationState.multiDragStart = point; elevationState.multiDragSelection = structuredClone(elevationState.selection); elevationCanvas.setPointerCapture(event.pointerId); elevationCanvas.style.cursor = 'grabbing'; drawElevation(); return; }
+  elevationState.selected = null; elevationState.boxSelecting = true; elevationState.boxStart = elevationRawPoint(event); elevationState.boxCurrent = elevationState.boxStart; elevationCanvas.setPointerCapture(event.pointerId); updateElevationUi(); drawElevation();
+}
+function handleElevationHighlightPointerMove(event) {
+  if (!elevationPageActive()) return;
+  if (elevationState.boxSelecting) { event.preventDefault(); event.stopImmediatePropagation(); elevationState.boxCurrent = elevationRawPoint(event); drawElevation(); return; }
+  if (elevationState.multiDragSnapshot && elevationState.multiDragSelection) { event.preventDefault(); event.stopImmediatePropagation(); const point = elevationSnapPoint(event), dx = point.x - elevationState.multiDragStart.x, dy = point.y - elevationState.multiDragStart.y; restoreElevationSnapshot(elevationState.multiDragSnapshot); moveElevationSelectionBy(elevationState.multiDragSelection, dx, dy); renderElevationList(); drawElevation(); }
+}
+function handleElevationHighlightPointerEnd(event) {
+  if (!elevationPageActive()) return;
+  if (elevationState.boxSelecting) { event.preventDefault(); event.stopImmediatePropagation(); elevationState.selection = selectElevationItemsInRect(elevationState.boxStart, elevationState.boxCurrent || elevationState.boxStart); elevationState.boxSelecting = false; elevationState.boxStart = null; elevationState.boxCurrent = null; updateElevationUi(); drawElevation(); return; }
+  if (elevationState.multiDragSnapshot && elevationState.multiDragSelection) { event.preventDefault(); event.stopImmediatePropagation(); if (JSON.stringify(elevationState.views) !== JSON.stringify(elevationState.multiDragSnapshot)) { pushElevationHistory(elevationState.multiDragSnapshot); markDirty(); persist(); } elevationState.multiDragSnapshot = null; elevationState.multiDragStart = null; elevationState.multiDragSelection = null; updateElevationUi(); drawElevation(); }
+}
+elevationCanvas?.addEventListener('pointerdown', handleElevationHighlightPointerDown, true);
+elevationCanvas?.addEventListener('pointermove', handleElevationHighlightPointerMove, true);
+elevationCanvas?.addEventListener('pointerup', handleElevationHighlightPointerEnd, true);
+elevationCanvas?.addEventListener('pointercancel', handleElevationHighlightPointerEnd, true);
+window.addEventListener('keydown', (event) => {
+  if (!elevationPageActive() || isTypingTarget(event.target)) return;
+  const key = event.key.toLowerCase();
+  if ((event.ctrlKey || event.metaKey) && key === 'c') { if (copyElevationSelection()) { event.preventDefault(); event.stopImmediatePropagation(); } return; }
+  if ((event.ctrlKey || event.metaKey) && key === 'v') { if (pasteElevationClipboard()) { event.preventDefault(); event.stopImmediatePropagation(); } return; }
+  if ((event.key === 'Delete' || event.key === 'Backspace') && deleteElevationSelection()) { event.preventDefault(); event.stopImmediatePropagation(); }
+}, true);
 $('#floorPageButton')?.addEventListener('click', () => setWorkspacePage('floor'));
 $('#elevationPageButton')?.addEventListener('click', () => setWorkspacePage('elevation'));
 function setWorkspacePage(page) { const elevation = page === 'elevation'; $('#floorWorkspace').hidden = elevation; $('#elevationWorkspace').hidden = !elevation; $('#floorPageButton').classList.toggle('active', !elevation); $('#elevationPageButton').classList.toggle('active', elevation); elevation ? resizeElevation() : resize(); }
 function elevationPageActive() { return $('#elevationWorkspace') && !$('#elevationWorkspace').hidden; }
 document.querySelectorAll('[data-elev-tool]').forEach((button) => button.addEventListener('click', () => setElevationTool(button.dataset.elevTool)));
+document.querySelectorAll('[data-elev-select-mode]').forEach((button) => button.addEventListener('click', () => {
+  elevationState.selectMode = button.dataset.elevSelectMode; if (elevationState.selectMode === 'single') clearElevationMultiSelection(); else elevationState.selected = null;
+  document.querySelectorAll('[data-elev-select-mode]').forEach((choice) => choice.classList.toggle('active', choice === button));
+  setElevationTool('select'); updateElevationUi(); drawElevation();
+}));
 $('#elevationViewSelect')?.addEventListener('change', (event) => { elevationState.currentView = event.target.value; elevationState.selected = null; markDirty(); persist(); updateElevationUi(); resizeElevation(); drawElevation(); });
 $('#elevGridSize')?.addEventListener('change', (event) => { const view = currentElevation(), old = elevationGridPixels(); pushElevationHistory(); view.gridInches = Number(event.target.value); const scale = elevationGridPixels() / old; view.items = view.items.map((item) => item.type === 'text' ? { ...item, x: item.x * scale, y: item.y * scale } : { ...item, a: { x: item.a.x * scale, y: item.a.y * scale }, b: { x: item.b.x * scale, y: item.b.y * scale }, ...(item.labelOffset ? { labelOffset: { x: item.labelOffset.x * scale, y: item.labelOffset.y * scale } } : {}) }); markDirty(); persist(); updateElevationUi(); drawElevation(); });
 $('#elevLength')?.addEventListener('change', (event) => applyElevationSelectedLength(event.target.value));

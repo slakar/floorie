@@ -43,6 +43,8 @@ button { color: inherit; }
 .shape-choice:hover { background: #ece8dd; }
 .shape-choice.active { color: #a83e22; border-color: #dfb5a7; background: #f1dfd7; }
 .object-palette { top: 85px; }
+.select-palette { top: 85px; }
+.elevation-select-palette { top: 300px; }
 .tool.compact { height: 53px; }
 .tool-divider { width: 42px; height: 1px; margin: 7px 0; background: #d3cfc4; }
 .canvas-shell { position: relative; overflow: hidden; background: #e4e0d5; }

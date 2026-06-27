@@ -40,7 +40,7 @@
           <button class="tool active" data-tool="wall" title="Draw walls (W)">
             <span class="tool-icon wall-icon"></span><span>Wall</span>
           </button>
-          <button class="tool" data-tool="edit" title="Edit wall endpoints (V)">
+          <button class="tool" data-tool="edit" title="Select or edit wall endpoints (V)">
             <span class="tool-icon edit-icon">↔</span><span>Edit</span>
           </button>
           <button class="tool" data-tool="ruler" title="Measure between any two points (R)">
@@ -76,6 +76,10 @@
         <aside id="objectPalette" class="shape-palette object-palette" aria-label="Object choices" hidden>
           <button class="shape-choice active" data-object="car" title="Car top view"><span>▰</span><small>Car</small></button>
           <button class="shape-choice" data-object="person" title="Person top view"><span>●</span><small>Person</small></button>
+        </aside>
+        <aside id="selectPalette" class="shape-palette select-palette" aria-label="Selection choices" hidden>
+          <button class="shape-choice active" data-select-mode="single" title="Select one item"><span>✥</span><small>Select</small></button>
+          <button class="shape-choice" data-select-mode="highlight" title="Box select multiple items"><span>▣</span><small>Highlight</small></button>
         </aside>
 
         <section class="canvas-shell">
@@ -204,6 +208,10 @@
           <button id="elevRedoButton" class="tool compact" title="Redo elevation change" disabled>
             <span class="tool-icon">&#8631;</span><span>Redo</span>
           </button>
+        </aside>
+        <aside id="elevSelectPalette" class="shape-palette elevation-select-palette" aria-label="Elevation selection choices" hidden>
+          <button class="shape-choice active" data-elev-select-mode="single" title="Select one elevation item"><span>✥</span><small>Select</small></button>
+          <button class="shape-choice" data-elev-select-mode="highlight" title="Box select multiple elevation items"><span>▣</span><small>Highlight</small></button>
         </aside>
 
         <section class="canvas-shell">

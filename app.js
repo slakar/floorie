@@ -40,7 +40,7 @@ const state = {
   multiDragSnapshot: null, multiDragStart: null, multiDragSelection: null, floorClipboard: null,
   editingLayerId: null, deletingLayerId: null,
   serverId: saved.server?.id || null, serverName: saved.server?.name || 'Untitled plan',
-  dirty: saved.localState?.dirty === true,
+  dirty: saved.localState?.dirty === true, snapToGrid: true,
   zoom: Number(saved.viewport?.zoom) || 1,
   offset: { x: Number(saved.viewport?.offset?.x) || 0, y: Number(saved.viewport?.offset?.y) || 0 },
   gridInches: Number(saved.settings?.gridInches) || 12,
@@ -131,8 +131,10 @@ const screenPoint = (event) => {
 };
 const canvasPoint = (event) => {
   const point = screenPoint(event);
-  return { x: snap((point.x - state.offset.x) / state.zoom), y: snap((point.y - state.offset.y) / state.zoom) };
+  const world = { x: (point.x - state.offset.x) / state.zoom, y: (point.y - state.offset.y) / state.zoom };
+  return state.snapToGrid ? { x: snap(world.x), y: snap(world.y) } : world;
 };
+const maybeSnapPoint = (point) => state.snapToGrid ? { x: snap(point.x), y: snap(point.y) } : point;
 const rawCanvasPoint = (event) => {
   const point = screenPoint(event);
   return { x: (point.x - state.offset.x) / state.zoom, y: (point.y - state.offset.y) / state.zoom };
@@ -427,7 +429,7 @@ function drawObject(object, selected = false) {
   ctx.restore();
   if (selected) drawScreenHandle({ x: bounds.x2, y: bounds.y2 });
 }
-function objectSizeText(object) { return `${formatLength(pixelsToInches(object.width))} ÃƒÆ’Ã¢â‚¬â€ ${formatLength(pixelsToInches(object.height))}`; }
+function objectSizeText(object) { return `${formatLength(pixelsToInches(object.width))} ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â ${formatLength(pixelsToInches(object.height))}`; }
 
 function updateObjectDrag(event) {
   const object = state.objects[state.selectedObject]; if (!object) return;
@@ -435,7 +437,7 @@ function updateObjectDrag(event) {
     const point = canvasPoint(event), dx = point.x - state.objectDragStart.x, dy = point.y - state.objectDragStart.y;
     object.x = state.objectDragOriginal.x + dx; object.y = state.objectDragOriginal.y + dy; return;
   }
-  const raw = rawCanvasPoint(event), minSize = feetToPixels(.5), aspect = state.objectDragOriginal.width / state.objectDragOriginal.height;
+  const raw = maybeSnapPoint(rawCanvasPoint(event)), minSize = feetToPixels(.5), aspect = state.objectDragOriginal.width / state.objectDragOriginal.height;
   let width = Math.max(minSize, Math.abs(raw.x - state.objectDragOriginal.x) * 2);
   let height = Math.max(minSize, Math.abs(raw.y - state.objectDragOriginal.y) * 2);
   if (event.shiftKey) { if (width / height > aspect) height = width / aspect; else width = height * aspect; }
@@ -573,7 +575,7 @@ function shapeSizeText(shape) {
   if (shape.type === 'square' || shape.type === 'rectangle') {
     const width = formatLength(pixelsToInches(Math.abs(shape.b.x - shape.a.x)));
     const height = formatLength(pixelsToInches(Math.abs(shape.b.y - shape.a.y)));
-    return `${width} ÃƒÆ’Ã¢â‚¬â€ ${height}`;
+    return `${width} ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â ${height}`;
   }
   if (shape.type === 'circle') return `dia ${formatLength(pixelsToInches(shape.radius * 2))}`;
   return `dia ${formatLength(pixelsToInches(shape.radius * 2))}`;
@@ -686,7 +688,7 @@ function renderLayerControls() {
     const meta = document.createElement('div'); meta.className = 'layer-meta';
     const name = document.createElement('strong'); name.textContent = layer.name;
     const details = document.createElement('small'); details.textContent = `${Math.round(normalizeLayerOpacity(layer.opacity) * 100)}% opacity`;
-    const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'text-button layer-delete'; remove.textContent = '×'; remove.title = 'Delete layer'; remove.setAttribute('aria-label', `Delete ${layer.name}`);
+    const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'text-button layer-delete'; remove.textContent = 'Ã—'; remove.title = 'Delete layer'; remove.setAttribute('aria-label', `Delete ${layer.name}`);
     const edit = document.createElement('button'); edit.type = 'button'; edit.className = 'text-button'; edit.textContent = 'Edit';
     meta.append(name, details); row.append(visible, swatch, meta, remove, edit); list.append(row);
     visible.addEventListener('change', () => setLayerVisibility(layer.id, visible.checked));
@@ -826,7 +828,7 @@ function updateUi() {
   const selectedWall = state.selectedWall !== null ? state.walls[state.selectedWall] : null;
   $('#wallWidth').disabled = !selectedWall;
   if (selectedWall) { $('#wallWidth').value = String(selectedWall.thickness || state.wallWidth); $('#wallWidthValue').textContent = (selectedWall.thickness || state.wallWidth) + ' in'; }
-  else { $('#wallWidthValue').textContent = 'ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â'; }
+  else { $('#wallWidthValue').textContent = 'ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â'; }
   const selectedLine = selectedLineElement();
   const selectedLineLayer = selectedLine ? layerForItem(selectedLine.item) : null;
   const selectedLineMissingLayer = selectedLine ? itemHasMissingLayer(selectedLine.item) : false;
@@ -839,7 +841,7 @@ function updateUi() {
   } else if (selectedLine) {
     const color = normalizeColor(selectedLine.item.color, selectedLine.fallback), shade = Math.round(normalizeShade(selectedLine.item.shade) * 100);
     $('#lineColor').value = color; $('#lineColorValue').textContent = color; $('#lineShade').value = String(shade); $('#lineShadeValue').textContent = `${shade}%`;
-  } else { $('#lineColorValue').textContent = 'â€”'; $('#lineShadeValue').textContent = 'â€”'; }
+  } else { $('#lineColorValue').textContent = 'Ã¢â‚¬â€'; $('#lineShadeValue').textContent = 'Ã¢â‚¬â€'; }
   const sizeInfo = selectedSizeInfo();
   $('#elementLength').disabled = !sizeInfo; $('#elementHeight').disabled = !sizeInfo?.height;
   $('#elementLengthLabel').textContent = sizeInfo?.lengthLabel || 'Selected length (ft)'; $('#elementLength').value = sizeInfo?.length || '';
@@ -847,7 +849,7 @@ function updateUi() {
   const selectedLabel = state.selectedLabel !== null ? state.labels[state.selectedLabel] : null;
   $('#labelSize').disabled = !selectedLabel;
   if (selectedLabel) { $('#labelSize').value = String(selectedLabel.fontSize || 16); $('#labelSizeValue').textContent = `${selectedLabel.fontSize || 16}px`; }
-  else { $('#labelSizeValue').textContent = 'ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â'; }
+  else { $('#labelSizeValue').textContent = 'ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â'; }
   renderLayerControls();
   renderWallList();
 }
@@ -1024,7 +1026,7 @@ canvas.addEventListener('pointermove', (event) => {
     const rawPoint = rawCanvasPoint(event);
     state.labels[state.selectedLabel] = {
       ...state.labels[state.selectedLabel],
-      x: snap(rawPoint.x - state.labelDragOffset.x), y: snap(rawPoint.y - state.labelDragOffset.y),
+      ...maybeSnapPoint({ x: rawPoint.x - state.labelDragOffset.x, y: rawPoint.y - state.labelDragOffset.y }),
     };
     draw(); return;
   }
@@ -1120,12 +1122,12 @@ function setTool(tool) {
   syncSelectModeUi();
   document.querySelectorAll('[data-tool]').forEach((button) => button.classList.toggle('active', button.dataset.tool === tool));
   const content = {
-    wall: ['Wall tool', 'Drag between grid points Ãƒâ€šÃ‚Â· Hold Shift for a straight wall'],
+    wall: ['Wall tool', 'Drag between grid points ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â· Hold Shift for a straight wall'],
     edit: [state.selectMode === 'highlight' ? 'Highlight Select' : 'Select tool', state.selectMode === 'highlight' ? 'Drag a box around complete items; drag a highlighted item to move the group' : 'Select a wall or column; drag endpoints, handles, or the column body'],
     ruler: ['Ruler tool', 'Drag to measure; select and drag a line, endpoint, or label'],
     shapes: ['Shapes tool', 'Choose a shape, then drag on the canvas; selected shapes can be moved or resized'],
-    objects: ['Column tool', 'Click to insert a 1 ft × 1 ft column; drag to move or resize'],
-    text: ['Text tool', 'Click to add Ãƒâ€šÃ‚Â· Drag to move Ãƒâ€šÃ‚Â· Double-click to edit'],
+    objects: ['Column tool', 'Click to insert a 1 ft Ã— 1 ft column; drag to move or resize'],
+    text: ['Text tool', 'Click to add ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â· Drag to move ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â· Double-click to edit'],
     erase: ['Erase tool', 'Click a wall to remove it'], pan: ['Pan tool', 'Drag to move the grid and plan'],
   }[tool];
   $('#modeLabel').textContent = content[0]; $('#modeHelp').textContent = content[1]; setCanvasCursor(); updateUi(); draw();
@@ -1220,7 +1222,7 @@ async function saveServerPlan({ saveAsNew = false } = {}) {
   const name = prompt('Plan name:', state.serverName || 'Untitled plan');
   if (!name || !name.trim()) return false;
   try {
-    $('#saveStatus').textContent = saveAsNew ? 'Saving new planÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦' : 'Saving to serverÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦';
+    $('#saveStatus').textContent = saveAsNew ? 'Saving new planÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦' : 'Saving to serverÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦';
     const payload = await apiRequest('./api.php', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: saveAsNew ? null : state.serverId, name: name.trim().slice(0, 100), plan: projectData() }),
@@ -1232,7 +1234,7 @@ async function saveServerPlan({ saveAsNew = false } = {}) {
 
 async function openServerPlans() {
   const list = $('#serverPlanList'); list.replaceChildren();
-  const loading = document.createElement('p'); loading.className = 'dialog-message'; loading.textContent = 'Loading plansÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦'; list.append(loading);
+  const loading = document.createElement('p'); loading.className = 'dialog-message'; loading.textContent = 'Loading plansÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦'; list.append(loading);
   $('#serverDialog').showModal();
   try {
     const payload = await apiRequest('./api.php'); list.replaceChildren();
@@ -1352,6 +1354,7 @@ $('#confirmDeleteLayer').addEventListener('click', confirmDeleteLayer);
 $('#cancelDeleteLayer').addEventListener('click', closeDeleteLayerDialog);
 $('#closeDeleteLayerDialog').addEventListener('click', closeDeleteLayerDialog);
 $('#deleteLayerDialog').addEventListener('click', (event) => { if (event.target === $('#deleteLayerDialog')) closeDeleteLayerDialog(); });
+$('#snapToGrid').addEventListener('change', (event) => { state.snapToGrid = event.target.checked; });
 $('#gridSize').addEventListener('change', (event) => {
   const oldGrid = state.grid; state.gridInches = Number(event.target.value); state.grid = gridPixels(state.gridInches);
   const scale = state.grid / oldGrid;
@@ -1601,7 +1604,7 @@ function drawElevation() {
 }
 
 function elevationItemName(item) { return item.type === 'dimension' ? 'Dimension' : item.type === 'rect' ? 'Rectangle' : item.type === 'text' ? 'Text' : 'Line'; }
-function elevationItemDetail(item) { if (item.type === 'text') return item.text; if (item.type === 'rect') return `${formatLength(elevationPixelsToInches(Math.abs(item.b.x - item.a.x)))} ÃƒÆ’Ã¢â‚¬â€ ${formatLength(elevationPixelsToInches(Math.abs(item.b.y - item.a.y)))}`; return formatLength(elevationPixelsToInches(Math.hypot(item.b.x - item.a.x, item.b.y - item.a.y))); }
+function elevationItemDetail(item) { if (item.type === 'text') return item.text; if (item.type === 'rect') return `${formatLength(elevationPixelsToInches(Math.abs(item.b.x - item.a.x)))} ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â ${formatLength(elevationPixelsToInches(Math.abs(item.b.y - item.a.y)))}`; return formatLength(elevationPixelsToInches(Math.hypot(item.b.x - item.a.x, item.b.y - item.a.y))); }
 function renderElevationList() {
   const list = $('#elevationList'); if (!list) return; list.replaceChildren(); const items = currentElevation().items;
   if (!items.length) { const empty = document.createElement('li'); empty.className = 'empty-list'; empty.textContent = 'Draw elevation lines, dimensions, rectangles, or labels.'; list.append(empty); }

@@ -60,6 +60,8 @@ button { color: inherit; }
 .zoom-controls button { width: 34px; height: 34px; border: 0; background: transparent; cursor: pointer; font-size: 18px; }
 .zoom-controls button:hover { background: #e9e5da; }
 .zoom-controls span { min-width: 53px; text-align: center; color: #686a61; font-size: 10px; }
+.snap-toggle { position: absolute; left: 18px; bottom: 20px; display: flex; align-items: center; gap: 7px; padding: 9px 11px; border: 1px solid #c4c0b5; border-radius: 4px; background: #f7f4ec; box-shadow: 0 4px 18px rgba(48,45,38,.08); color: #56584f; cursor: pointer; font-size: 11px; font-weight: 600; user-select: none; }
+.snap-toggle input { width: 14px; height: 14px; margin: 0; accent-color: #ba4b2c; }
 .inspector { display: flex; flex-direction: column; min-height: 0; padding: 20px; overflow-y: auto; background: #f7f4ec; border-left: 1px solid #c9c5ba; }
 .inspector-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 28px; }
 .text-button { border: 0; background: transparent; color: #a34329; font-size: 11px; cursor: pointer; }

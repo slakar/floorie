@@ -155,7 +155,19 @@
               <output id="labelSizeValue">—</output>
             </div>
           </label>
-          <div hidden aria-hidden="true"><span id="wallCount"></span></div>
+          <section class="layers-panel" aria-label="Floor plan layers">
+            <label class="field layer-assignment-field">
+              <span>Selected element layer</span>
+              <select id="layerSelect" disabled>
+                <option value="">No selection</option>
+              </select>
+            </label>
+            <div class="layers-heading">
+              <span class="eyebrow">Layers</span>
+              <button id="addLayerButton" class="text-button" type="button">+ Add</button>
+            </div>
+            <div id="layerList" class="layer-list"></div>
+          </section>          <div hidden aria-hidden="true"><span id="wallCount"></span></div>
           <div hidden aria-hidden="true">
             <span id="totalLength"></span><span id="rulerCount"></span><span id="labelCount"></span><span id="shapeCount"></span><span id="objectCount"></span>
             <ol id="wallList"></ol><ul id="rulerList"></ul><ul id="labelList"></ul><ul id="shapeList"></ul><ul id="objectList"></ul>
@@ -279,6 +291,47 @@
         <button id="cancelNewProject" class="button button-light">Cancel</button>
         <button id="discardNewProject" class="button button-light danger-button">Discard</button>
         <button id="saveNewProject" class="button button-dark">Save</button>
+      </div>
+    </dialog>
+    <dialog id="layerDialog" class="server-dialog layer-dialog">
+      <div class="dialog-heading">
+        <div><span class="eyebrow">Layer properties</span><h2>Edit layer</h2></div>
+        <button id="closeLayerDialog" class="dialog-close" aria-label="Close">Ã—</button>
+      </div>
+      <div class="layer-dialog-body">
+        <label class="field">
+          <span>Layer name</span>
+          <input id="layerName" class="number-input" type="text" maxlength="80" />
+        </label>
+        <label class="field">
+          <span>Layer color</span>
+          <div class="color-row">
+            <input id="layerColor" type="color" value="#30332d" />
+            <output id="layerColorValue">#30332d</output>
+          </div>
+        </label>
+        <label class="field">
+          <span>Layer opacity</span>
+          <div class="range-row">
+            <input id="layerOpacity" type="range" min="0" max="100" step="1" value="100" />
+            <output id="layerOpacityValue">100%</output>
+          </div>
+        </label>
+      </div>
+      <div class="confirm-actions">
+        <button id="cancelLayerEdit" class="button button-light">Cancel</button>
+        <button id="saveLayerEdit" class="button button-dark">Save layer</button>
+      </div>
+    </dialog>
+    <dialog id="deleteLayerDialog" class="server-dialog confirm-dialog">
+      <div class="dialog-heading">
+        <div><span class="eyebrow">Delete layer</span><h2>Delete this layer?</h2></div>
+        <button id="closeDeleteLayerDialog" class="dialog-close" aria-label="Cancel">Ã—</button>
+      </div>
+      <p id="deleteLayerMessage" class="confirm-message">Items assigned to this layer will remain on the canvas and render black at 100% opacity until reassigned.</p>
+      <div class="confirm-actions">
+        <button id="cancelDeleteLayer" class="button button-light">Cancel</button>
+        <button id="confirmDeleteLayer" class="button button-light danger-button">Delete</button>
       </div>
     </dialog>
     <script src="./app.js" defer></script>

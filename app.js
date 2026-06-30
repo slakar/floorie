@@ -5,6 +5,7 @@ const $ = (selector) => document.querySelector(selector);
 const gridPixels = (inches) => ({ 1: 12, 3: 20, 6: 25, 12: 32, 24: 44 })[inches] || 32;
 const DEFAULT_WALL_COLOR = '#30332d';
 const DEFAULT_SHAPE_COLOR = '#59615b';
+const DEFAULT_LAYER_COLOR = '#30332d';
 const COLOR_PATTERN = /^#[0-9a-f]{6}$/i;
 var elevationReady = false;
 const OBJECT_DEFS = {
@@ -25,7 +26,7 @@ function readLocalProject() {
 
 const saved = readLocalProject();
 const state = {
-  walls: saved.walls || [], labels: saved.labels || [], rulers: saved.rulers || [], shapes: saved.shapes || [], objects: saved.objects || [], history: [], future: [], tool: 'wall',
+  walls: saved.walls || [], labels: saved.labels || [], rulers: saved.rulers || [], shapes: saved.shapes || [], objects: saved.objects || [], layers: saved.layers || [], history: [], future: [], tool: 'wall',
   drawing: false, panning: false, start: null, preview: null, panPointer: null, spacePressed: false,
   selectedWall: null, editingHandle: null, editSnapshot: null,
   selectedLabel: null, draggingLabel: false, labelSnapshot: null, labelDragOffset: null, labelSizeSnapshot: null,
@@ -37,6 +38,7 @@ const state = {
   wallSizeSnapshot: null, lineStyleSnapshot: null,
   selectMode: 'single', multiSelected: { walls: [], labels: [], rulers: [], shapes: [], objects: [] }, boxSelecting: false, boxStart: null, boxCurrent: null,
   multiDragSnapshot: null, multiDragStart: null, multiDragSelection: null, floorClipboard: null,
+  editingLayerId: null, deletingLayerId: null,
   serverId: saved.server?.id || null, serverName: saved.server?.name || 'Untitled plan',
   dirty: saved.localState?.dirty === true,
   zoom: Number(saved.viewport?.zoom) || 1,
@@ -48,17 +50,20 @@ const state = {
 };
 state.grid = gridPixels(state.gridInches);
 
+const objectTintCache = new Map();
 const objectImages = Object.fromEntries(Object.entries(OBJECT_DEFS).map(([key, def]) => {
-  const image = new Image(); image.onload = () => draw(); image.src = def.src; return [key, image];
+  const image = new Image(); image.onload = () => { objectTintCache.clear(); draw(); }; image.src = def.src; return [key, image];
 }));
 
-const documentSnapshot = () => structuredClone({ walls: state.walls, labels: state.labels, rulers: state.rulers, shapes: state.shapes, objects: state.objects });
+const documentSnapshot = () => structuredClone({ walls: state.walls, labels: state.labels, rulers: state.rulers, shapes: state.shapes, objects: state.objects, layers: state.layers });
 function restoreSnapshot(snapshot) {
   state.walls = structuredClone(snapshot.walls || []);
   state.labels = structuredClone(snapshot.labels || []);
   state.rulers = structuredClone(snapshot.rulers || []);
   state.shapes = structuredClone(snapshot.shapes || []);
   state.objects = structuredClone(snapshot.objects || []);
+  state.layers = normalizeLayers(snapshot.layers || []);
+  normalizeFloorLayerAssignments();
 }
 function pushHistory(snapshot = documentSnapshot()) {
   state.history.push(snapshot); if (state.history.length > 100) state.history.shift();
@@ -71,6 +76,51 @@ const samePoint = (a, b) => a.x === b.x && a.y === b.y;
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const normalizeColor = (value, fallback) => typeof value === 'string' && COLOR_PATTERN.test(value) ? value.toLowerCase() : fallback;
 const normalizeShade = (value) => Number.isFinite(Number(value)) ? clamp(Number(value), .2, 1) : 1;
+const normalizeLayerOpacity = (value) => Number.isFinite(Number(value)) ? clamp(Number(value), 0, 1) : 1;
+function createLayerId() { return `layer-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`; }
+function normalizeLayerName(value, fallback) {
+  const name = typeof value === 'string' ? value.trim().slice(0, 80) : '';
+  return name || fallback;
+}
+function normalizeLayers(layers) {
+  if (!Array.isArray(layers)) return [];
+  const used = new Set();
+  return layers.map((layer, index) => {
+    let id = typeof layer?.id === 'string' && layer.id.trim() ? layer.id.trim().slice(0, 80) : createLayerId();
+    while (used.has(id)) id = createLayerId();
+    used.add(id);
+    return {
+      id,
+      name: normalizeLayerName(layer?.name, `Layer ${index + 1}`),
+      color: normalizeColor(layer?.color, DEFAULT_LAYER_COLOR),
+      opacity: normalizeLayerOpacity(layer?.opacity),
+      visible: layer?.visible !== false,
+    };
+  });
+}
+function normalizeLayerId(value, layers = state.layers) {
+  return typeof value === 'string' && layers.some((layer) => layer.id === value) ? value : null;
+}
+function layerAssignmentId(value) {
+  const id = typeof value === 'string' ? value.trim().slice(0, 80) : '';
+  return id || null;
+}
+function layerForItem(item) { return state.layers.find((layer) => layer.id === layerAssignmentId(item?.layerId)) || null; }
+function itemHasMissingLayer(item) { return !!layerAssignmentId(item?.layerId) && !layerForItem(item); }
+function floorItemVisible(item) { const layer = layerForItem(item); return !layer || layer.visible !== false; }
+function floorItemLayerStyle(item, fallbackColor, fallbackOpacity = 1) {
+  const layer = layerForItem(item);
+  if (layer) return { visible: layer.visible !== false, color: layer.color, opacity: normalizeLayerOpacity(layer.opacity) };
+  if (itemHasMissingLayer(item)) return { visible: true, color: '#000000', opacity: 1 };
+  return { visible: true, color: normalizeColor(item?.color, fallbackColor), opacity: fallbackOpacity };
+}
+function normalizeFloorLayerAssignments() {
+  ['walls', 'labels', 'rulers', 'shapes', 'objects'].forEach((kind) => {
+    state[kind] = (state[kind] || []).map((item) => ({ ...item, layerId: layerAssignmentId(item?.layerId) }));
+  });
+}
+state.layers = normalizeLayers(state.layers);
+normalizeFloorLayerAssignments();
 const pixelsToInches = (pixels) => pixels / state.grid * state.gridInches;
 const feetToPixels = (feet) => feet * 12 / state.gridInches * state.grid;
 const trimNumber = (value, places = 2) => Number(value.toFixed(places)).toString();
@@ -127,16 +177,17 @@ function drawGrid(width, height) {
 }
 
 function drawWall(wall, preview = false, selected = false) {
+  const style = preview ? { visible: true, color: '#b54b2d', opacity: .65 } : floorItemLayerStyle(wall, DEFAULT_WALL_COLOR, normalizeShade(wall.shade));
+  if (!style.visible) return;
   ctx.save(); ctx.translate(state.offset.x, state.offset.y); ctx.scale(state.zoom, state.zoom);
   ctx.lineCap = 'square'; ctx.lineJoin = 'miter';
-  ctx.strokeStyle = preview ? '#b54b2d' : normalizeColor(wall.color, DEFAULT_WALL_COLOR); ctx.globalAlpha = preview ? .65 : normalizeShade(wall.shade);
+  ctx.strokeStyle = style.color; ctx.globalAlpha = style.opacity;
   ctx.lineWidth = Math.max(2, (wall.thickness || state.wallWidth) / state.gridInches * state.grid);
   ctx.beginPath(); ctx.moveTo(wall.a.x, wall.a.y); ctx.lineTo(wall.b.x, wall.b.y); ctx.stroke();
   if (selected && !preview) { ctx.globalAlpha = 1; ctx.strokeStyle = '#b54b2d'; ctx.lineWidth = Math.max(3 / state.zoom, ctx.lineWidth + 2 / state.zoom); ctx.setLineDash([8 / state.zoom, 5 / state.zoom]); ctx.beginPath(); ctx.moveTo(wall.a.x, wall.a.y); ctx.lineTo(wall.b.x, wall.b.y); ctx.stroke(); }
   ctx.restore();
   if (preview) drawWallPreviewLength(wall);
 }
-
 function drawWallPreviewLength(wall) {
   const ax = state.offset.x + wall.a.x * state.zoom, ay = state.offset.y + wall.a.y * state.zoom;
   const bx = state.offset.x + wall.b.x * state.zoom, by = state.offset.y + wall.b.y * state.zoom;
@@ -168,13 +219,15 @@ function labelMetrics(label) {
 
 function labelAtPoint(point) {
   for (let i = state.labels.length - 1; i >= 0; i -= 1) {
-    const label = state.labels[i], metrics = labelMetrics(label);
+    const label = state.labels[i]; if (!floorItemVisible(label)) continue; const metrics = labelMetrics(label);
     if (Math.abs(point.x - label.x) <= metrics.width / 2 + 8 && Math.abs(point.y - label.y) <= metrics.height / 2 + 6) return i;
   }
   return -1;
 }
 
 function drawLabel(label, selected = false) {
+  const style = floorItemLayerStyle(label, '#292b26', 1);
+  if (!style.visible) return;
   const fontSize = label.fontSize || 16;
   ctx.save(); ctx.translate(state.offset.x, state.offset.y); ctx.scale(state.zoom, state.zoom);
   ctx.font = `600 ${fontSize}px "DM Sans", sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -185,9 +238,8 @@ function drawLabel(label, selected = false) {
     ctx.fillRect(label.x - metrics.width / 2 - 7, label.y - metrics.height / 2 - 4, metrics.width + 14, metrics.height + 8);
     ctx.strokeRect(label.x - metrics.width / 2 - 7, label.y - metrics.height / 2 - 4, metrics.width + 14, metrics.height + 8);
   }
-  ctx.fillStyle = '#292b26'; ctx.fillText(label.text, label.x, label.y); ctx.restore();
+  ctx.globalAlpha = style.opacity; ctx.fillStyle = style.color; ctx.fillText(label.text, label.x, label.y); ctx.restore();
 }
-
 function rulerLabelWorldPosition(ruler) {
   const midpoint = { x: (ruler.a.x + ruler.b.x) / 2, y: (ruler.a.y + ruler.b.y) / 2 };
   if (ruler.labelOffset) return { x: midpoint.x + ruler.labelOffset.x, y: midpoint.y + ruler.labelOffset.y };
@@ -196,25 +248,26 @@ function rulerLabelWorldPosition(ruler) {
 }
 
 function drawRuler(ruler, preview = false, selected = false) {
+  const style = preview ? { visible: true, color: '#b54b2d', opacity: 1 } : floorItemLayerStyle(ruler, '#436b73', 1);
+  if (!style.visible) return;
   const ax = state.offset.x + ruler.a.x * state.zoom, ay = state.offset.y + ruler.a.y * state.zoom;
   const bx = state.offset.x + ruler.b.x * state.zoom, by = state.offset.y + ruler.b.y * state.zoom;
   const dx = bx - ax, dy = by - ay, length = Math.hypot(dx, dy) || 1;
   const nx = -dy / length, ny = dx / length;
-  ctx.save();
-  ctx.strokeStyle = preview || selected ? '#b54b2d' : '#436b73'; ctx.fillStyle = ctx.strokeStyle; ctx.lineWidth = 1.5;
+  ctx.save(); ctx.globalAlpha = style.opacity;
+  ctx.strokeStyle = selected ? '#b54b2d' : style.color; ctx.fillStyle = ctx.strokeStyle; ctx.lineWidth = 1.5;
   ctx.setLineDash([6, 4]); ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke(); ctx.setLineDash([]);
   [[ax, ay], [bx, by]].forEach(([x, y]) => { ctx.beginPath(); ctx.moveTo(x - nx * 6, y - ny * 6); ctx.lineTo(x + nx * 6, y + ny * 6); ctx.stroke(); });
   const labelPosition = rulerLabelWorldPosition(ruler);
   const label = formatLength(wallLengthInches(ruler)), x = state.offset.x + labelPosition.x * state.zoom, y = state.offset.y + labelPosition.y * state.zoom;
   ctx.font = '600 11px \"DM Sans\", sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillStyle = preview || selected ? '#a34329' : '#355c64'; ctx.fillText(label, x, y + .5); ctx.restore();
+  ctx.fillStyle = selected ? '#a34329' : style.color; ctx.fillText(label, x, y + .5); ctx.restore();
   if (selected) {
     ctx.save(); ctx.fillStyle = '#fffdf8'; ctx.strokeStyle = '#b54b2d'; ctx.lineWidth = 2;
     [[ax, ay], [bx, by]].forEach(([px, py]) => { ctx.beginPath(); ctx.arc(px, py, 6, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); });
     ctx.restore();
   }
 }
-
 function rulerPartAtEvent(event, ruler) {
   const screen = screenPoint(event);
   const a = { x: state.offset.x + ruler.a.x * state.zoom, y: state.offset.y + ruler.a.y * state.zoom };
@@ -239,8 +292,10 @@ function shapeFromDrag(type, start, end) {
 }
 
 function drawShape(shape, preview = false, selected = false) {
+  const style = preview ? { visible: true, color: '#b54b2d', opacity: .7 } : floorItemLayerStyle(shape, DEFAULT_SHAPE_COLOR, normalizeShade(shape.shade));
+  if (!style.visible) return;
   ctx.save(); ctx.translate(state.offset.x, state.offset.y); ctx.scale(state.zoom, state.zoom);
-  ctx.strokeStyle = preview ? '#b54b2d' : normalizeColor(shape.color, DEFAULT_SHAPE_COLOR); ctx.globalAlpha = preview ? .7 : normalizeShade(shape.shade);
+  ctx.strokeStyle = style.color; ctx.globalAlpha = style.opacity;
   ctx.lineWidth = 2 / state.zoom; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.beginPath();
   if (shape.type === 'line') { ctx.moveTo(shape.a.x, shape.a.y); ctx.lineTo(shape.b.x, shape.b.y); }
   else if (shape.type === 'square' || shape.type === 'rectangle') {
@@ -257,7 +312,6 @@ function drawShape(shape, preview = false, selected = false) {
   }
   ctx.restore();
 }
-
 function screenFromWorld(point) { return { x: state.offset.x + point.x * state.zoom, y: state.offset.y + point.y * state.zoom }; }
 
 function drawScreenHandle(point) {
@@ -317,6 +371,7 @@ function objectBounds(object) {
 
 function objectAtPoint(point) {
   for (let i = state.objects.length - 1; i >= 0; i -= 1) {
+    if (!floorItemVisible(state.objects[i])) continue;
     const bounds = objectBounds(state.objects[i]);
     if (point.x >= bounds.x1 && point.x <= bounds.x2 && point.y >= bounds.y1 && point.y <= bounds.y2) return i;
   }
@@ -329,21 +384,33 @@ function objectPartAtEvent(event, object) {
   return raw.x >= bounds.x1 && raw.x <= bounds.x2 && raw.y >= bounds.y1 && raw.y <= bounds.y2 ? 'body' : null;
 }
 
+
+function tintedObjectImage(symbol, color) {
+  const image = objectImages[symbol];
+  if (!image?.complete || !image.naturalWidth) return null;
+  const key = `${symbol}:${color}:${image.naturalWidth}x${image.naturalHeight}`;
+  if (objectTintCache.has(key)) return objectTintCache.get(key);
+  const tinted = document.createElement('canvas'); tinted.width = image.naturalWidth; tinted.height = image.naturalHeight;
+  const tintCtx = tinted.getContext('2d'); tintCtx.drawImage(image, 0, 0);
+  tintCtx.globalCompositeOperation = 'source-in'; tintCtx.fillStyle = color; tintCtx.fillRect(0, 0, tinted.width, tinted.height);
+  objectTintCache.set(key, tinted); return tinted;
+}
 function drawObject(object, selected = false) {
-  const bounds = objectBounds(object), image = objectImages[object.symbol], def = OBJECT_DEFS[object.symbol] || OBJECT_DEFS.car;
-  ctx.save(); ctx.translate(state.offset.x, state.offset.y); ctx.scale(state.zoom, state.zoom);
-  if (image?.complete && image.naturalWidth) ctx.drawImage(image, bounds.x1, bounds.y1, object.width, object.height);
+  const style = floorItemLayerStyle(object, DEFAULT_SHAPE_COLOR, 1);
+  if (!style.visible) return;
+  const bounds = objectBounds(object), image = layerAssignmentId(object.layerId) ? tintedObjectImage(object.symbol, style.color) : objectImages[object.symbol], def = OBJECT_DEFS[object.symbol] || OBJECT_DEFS.car;
+  ctx.save(); ctx.translate(state.offset.x, state.offset.y); ctx.scale(state.zoom, state.zoom); ctx.globalAlpha = style.opacity;
+  if (image && ((image.complete && image.naturalWidth) || image instanceof HTMLCanvasElement)) ctx.drawImage(image, bounds.x1, bounds.y1, object.width, object.height);
   else {
-    ctx.fillStyle = 'rgba(247,244,236,.8)'; ctx.strokeStyle = '#59615b'; ctx.lineWidth = 2 / state.zoom;
+    ctx.fillStyle = 'rgba(247,244,236,.8)'; ctx.strokeStyle = style.color; ctx.lineWidth = 2 / state.zoom;
     ctx.fillRect(bounds.x1, bounds.y1, object.width, object.height); ctx.strokeRect(bounds.x1, bounds.y1, object.width, object.height);
     ctx.fillStyle = '#292b26'; ctx.font = `${12 / state.zoom}px "DM Sans", sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(def.label, object.x, object.y);
   }
-  if (selected) { ctx.strokeStyle = '#b54b2d'; ctx.lineWidth = 1.5 / state.zoom; ctx.setLineDash([6 / state.zoom, 4 / state.zoom]); ctx.strokeRect(bounds.x1, bounds.y1, object.width, object.height); }
+  if (selected) { ctx.globalAlpha = 1; ctx.strokeStyle = '#b54b2d'; ctx.lineWidth = 1.5 / state.zoom; ctx.setLineDash([6 / state.zoom, 4 / state.zoom]); ctx.strokeRect(bounds.x1, bounds.y1, object.width, object.height); }
   ctx.restore();
   if (selected) drawScreenHandle({ x: bounds.x2, y: bounds.y2 });
 }
-
-function objectSizeText(object) { return `${formatLength(pixelsToInches(object.width))} × ${formatLength(pixelsToInches(object.height))}`; }
+function objectSizeText(object) { return `${formatLength(pixelsToInches(object.width))} ÃƒÆ’Ã¢â‚¬â€ ${formatLength(pixelsToInches(object.height))}`; }
 
 function updateObjectDrag(event) {
   const object = state.objects[state.selectedObject]; if (!object) return;
@@ -370,21 +437,22 @@ function draw() {
   if (state.preview) drawWall(state.preview, true);
   if (state.rulerPreview) drawRuler(state.rulerPreview, true);
   if (state.shapePreview) drawShape(state.shapePreview, true);
-  if (state.tool === 'shapes' && state.selectedShape !== null && state.shapes[state.selectedShape]) drawShapeHandles(state.shapes[state.selectedShape]);
-  if (state.tool === 'edit' && state.selectMode === 'single' && state.selectedWall !== null && state.walls[state.selectedWall]) drawEditHandles(state.walls[state.selectedWall]);
+  if (state.tool === 'shapes' && state.selectedShape !== null && state.shapes[state.selectedShape] && floorItemVisible(state.shapes[state.selectedShape])) drawShapeHandles(state.shapes[state.selectedShape]);
+  if (state.tool === 'edit' && state.selectMode === 'single' && state.selectedWall !== null && state.walls[state.selectedWall] && floorItemVisible(state.walls[state.selectedWall])) drawEditHandles(state.walls[state.selectedWall]);
   drawFloorSelectionBox();
 }
 
 function projectData() {
   return {
-    format: 'gridline-floor-plan', version: 7, exportedAt: new Date().toISOString(),
+    format: 'gridline-floor-plan', version: 8, exportedAt: new Date().toISOString(),
     settings: { gridInches: state.gridInches, wallWidth: state.wallWidth, showText: state.showText, showDimensions: state.showDimensions },
     viewport: { zoom: state.zoom, offset: { ...state.offset } },
-    walls: state.walls.map((wall) => ({ a: { ...wall.a }, b: { ...wall.b }, thickness: wall.thickness || state.wallWidth, color: normalizeColor(wall.color, DEFAULT_WALL_COLOR), shade: normalizeShade(wall.shade) })),
-    labels: state.labels.map((label) => ({ text: label.text, x: label.x, y: label.y, fontSize: label.fontSize || 16 })),
-    rulers: state.rulers.map((ruler) => ({ a: { ...ruler.a }, b: { ...ruler.b }, ...(ruler.labelOffset ? { labelOffset: { ...ruler.labelOffset } } : {}) })),
-    shapes: state.shapes.map((shape) => structuredClone(shape)),
-    objects: state.objects.map((object) => ({ symbol: object.symbol, x: object.x, y: object.y, width: object.width, height: object.height })),
+    layers: state.layers.map((layer) => ({ id: layer.id, name: layer.name, color: normalizeColor(layer.color, DEFAULT_LAYER_COLOR), opacity: normalizeLayerOpacity(layer.opacity), visible: layer.visible !== false })),
+    walls: state.walls.map((wall) => ({ a: { ...wall.a }, b: { ...wall.b }, thickness: wall.thickness || state.wallWidth, color: normalizeColor(wall.color, DEFAULT_WALL_COLOR), shade: normalizeShade(wall.shade), layerId: layerAssignmentId(wall.layerId) })),
+    labels: state.labels.map((label) => ({ text: label.text, x: label.x, y: label.y, fontSize: label.fontSize || 16, layerId: layerAssignmentId(label.layerId) })),
+    rulers: state.rulers.map((ruler) => ({ a: { ...ruler.a }, b: { ...ruler.b }, ...(ruler.labelOffset ? { labelOffset: { ...ruler.labelOffset } } : {}), layerId: layerAssignmentId(ruler.layerId) })),
+    shapes: state.shapes.map((shape) => ({ ...structuredClone(shape), layerId: layerAssignmentId(shape.layerId) })),
+    objects: state.objects.map((object) => ({ symbol: object.symbol, x: object.x, y: object.y, width: object.width, height: object.height, layerId: layerAssignmentId(object.layerId) })),
     elevations: elevationReady && typeof elevationProjectData === 'function' ? elevationProjectData() : (saved.elevations || null),
     server: state.serverId ? { id: state.serverId, name: state.serverName } : null,
   };
@@ -428,6 +496,7 @@ function shapeAtPoint(point) {
   const tolerance = 10 / state.zoom;
   for (let i = state.shapes.length - 1; i >= 0; i -= 1) {
     const shape = state.shapes[i];
+    if (!floorItemVisible(shape)) continue;
     if (shape.type === 'line' && pointToSegmentDistance(point, shape.a, shape.b) <= tolerance) return i;
     if (shape.type === 'square' || shape.type === 'rectangle') {
       const x1 = Math.min(shape.a.x, shape.b.x), x2 = Math.max(shape.a.x, shape.b.x);
@@ -469,9 +538,9 @@ function labelBounds(label) { const metrics = labelMetrics(label); return { x1: 
 function shapeBounds(shape) { if (shape.a) return boundsFromPoints([shape.a, shape.b]); if (shape.type === 'semicircle') return { x1: shape.center.x - shape.radius, y1: shape.center.y - shape.radius, x2: shape.center.x + shape.radius, y2: shape.center.y }; return { x1: shape.center.x - shape.radius, y1: shape.center.y - shape.radius, x2: shape.center.x + shape.radius, y2: shape.center.y + shape.radius }; }
 function floorItemBounds(kind, item) { if (kind === 'walls' || kind === 'rulers') return boundsFromPoints([item.a, item.b]); if (kind === 'labels') return labelBounds(item); if (kind === 'shapes') return shapeBounds(item); if (kind === 'objects') return objectBounds(item); return null; }
 function rectContainsBounds(rect, bounds) { return bounds && bounds.x1 >= rect.x1 && bounds.y1 >= rect.y1 && bounds.x2 <= rect.x2 && bounds.y2 <= rect.y2; }
-function selectFloorItemsInRect(a, b) { const rect = normalizedRect(a, b), selection = emptyFloorSelection(); state.walls.forEach((item, index) => { if (rectContainsBounds(rect, floorItemBounds('walls', item))) selection.walls.push(index); }); state.labels.forEach((item, index) => { if (rectContainsBounds(rect, floorItemBounds('labels', item))) selection.labels.push(index); }); state.rulers.forEach((item, index) => { if (rectContainsBounds(rect, floorItemBounds('rulers', item))) selection.rulers.push(index); }); state.shapes.forEach((item, index) => { if (rectContainsBounds(rect, floorItemBounds('shapes', item))) selection.shapes.push(index); }); state.objects.forEach((item, index) => { if (rectContainsBounds(rect, floorItemBounds('objects', item))) selection.objects.push(index); }); return selection; }
+function selectFloorItemsInRect(a, b) { const rect = normalizedRect(a, b), selection = emptyFloorSelection(); state.walls.forEach((item, index) => { if (floorItemVisible(item) && rectContainsBounds(rect, floorItemBounds('walls', item))) selection.walls.push(index); }); state.labels.forEach((item, index) => { if (floorItemVisible(item) && rectContainsBounds(rect, floorItemBounds('labels', item))) selection.labels.push(index); }); state.rulers.forEach((item, index) => { if (floorItemVisible(item) && rectContainsBounds(rect, floorItemBounds('rulers', item))) selection.rulers.push(index); }); state.shapes.forEach((item, index) => { if (floorItemVisible(item) && rectContainsBounds(rect, floorItemBounds('shapes', item))) selection.shapes.push(index); }); state.objects.forEach((item, index) => { if (floorItemVisible(item) && rectContainsBounds(rect, floorItemBounds('objects', item))) selection.objects.push(index); }); return selection; }
 function drawFloorSelectionBox() { if (!state.boxSelecting || !state.boxStart || !state.boxCurrent) return; const a = screenFromWorld(state.boxStart), b = screenFromWorld(state.boxCurrent), rect = normalizedRect(a, b); ctx.save(); ctx.fillStyle = 'rgba(181,75,45,.12)'; ctx.strokeStyle = '#b54b2d'; ctx.lineWidth = 1.5; ctx.setLineDash([6, 4]); ctx.fillRect(rect.x1, rect.y1, rect.x2 - rect.x1, rect.y2 - rect.y1); ctx.strokeRect(rect.x1, rect.y1, rect.x2 - rect.x1, rect.y2 - rect.y1); ctx.restore(); }
-function floorSelectedItemAtEvent(event) { const raw = rawCanvasPoint(event); const objectIndex = objectAtPoint(raw); if (state.multiSelected.objects.includes(objectIndex)) return true; const labelIndex = labelAtPoint(raw); if (state.multiSelected.labels.includes(labelIndex)) return true; if (state.multiSelected.shapes.some((index) => state.shapes[index] && shapePartAtEvent(event, state.shapes[index]))) return true; if (state.multiSelected.rulers.some((index) => state.rulers[index] && rulerPartAtEvent(event, state.rulers[index]))) return true; return state.multiSelected.walls.some((index) => state.walls[index] && pointToSegmentDistance(raw, state.walls[index].a, state.walls[index].b) < 18 / state.zoom); }
+function floorSelectedItemAtEvent(event) { const raw = rawCanvasPoint(event); const objectIndex = objectAtPoint(raw); if (state.multiSelected.objects.includes(objectIndex)) return true; const labelIndex = labelAtPoint(raw); if (state.multiSelected.labels.includes(labelIndex)) return true; if (state.multiSelected.shapes.some((index) => state.shapes[index] && floorItemVisible(state.shapes[index]) && shapePartAtEvent(event, state.shapes[index]))) return true; if (state.multiSelected.rulers.some((index) => state.rulers[index] && floorItemVisible(state.rulers[index]) && rulerPartAtEvent(event, state.rulers[index]))) return true; return state.multiSelected.walls.some((index) => state.walls[index] && floorItemVisible(state.walls[index]) && pointToSegmentDistance(raw, state.walls[index].a, state.walls[index].b) < 18 / state.zoom); }
 function moveFloorSelectionBy(selection, dx, dy) { selection.walls.forEach((index) => { const item = state.walls[index]; if (item) { item.a = { x: item.a.x + dx, y: item.a.y + dy }; item.b = { x: item.b.x + dx, y: item.b.y + dy }; } }); selection.labels.forEach((index) => { const item = state.labels[index]; if (item) { item.x += dx; item.y += dy; } }); selection.rulers.forEach((index) => { const item = state.rulers[index]; if (item) { item.a = { x: item.a.x + dx, y: item.a.y + dy }; item.b = { x: item.b.x + dx, y: item.b.y + dy }; } }); selection.shapes.forEach((index) => { const item = state.shapes[index]; if (item) moveShape(item, dx, dy); }); selection.objects.forEach((index) => { const item = state.objects[index]; if (item) { item.x += dx; item.y += dy; } }); }
 function offsetFloorItem(kind, item, offset) { const clone = structuredClone(item); if (kind === 'walls' || kind === 'rulers') { clone.a = { x: clone.a.x + offset, y: clone.a.y + offset }; clone.b = { x: clone.b.x + offset, y: clone.b.y + offset }; } else if (kind === 'labels') { clone.x += offset; clone.y += offset; } else if (kind === 'shapes') moveShape(clone, offset, offset); else if (kind === 'objects') { clone.x += offset; clone.y += offset; } return clone; }
 function singleFloorSelection() { const selection = emptyFloorSelection(); if (state.selectedWall !== null && state.walls[state.selectedWall]) selection.walls.push(state.selectedWall); if (state.selectedLabel !== null && state.labels[state.selectedLabel]) selection.labels.push(state.selectedLabel); if (state.selectedRuler !== null && state.rulers[state.selectedRuler]) selection.rulers.push(state.selectedRuler); if (state.selectedShape !== null && state.shapes[state.selectedShape]) selection.shapes.push(state.selectedShape); if (state.selectedObject !== null && state.objects[state.selectedObject]) selection.objects.push(state.selectedObject); return selection; }
@@ -487,7 +556,7 @@ function shapeSizeText(shape) {
   if (shape.type === 'square' || shape.type === 'rectangle') {
     const width = formatLength(pixelsToInches(Math.abs(shape.b.x - shape.a.x)));
     const height = formatLength(pixelsToInches(Math.abs(shape.b.y - shape.a.y)));
-    return `${width} × ${height}`;
+    return `${width} ÃƒÆ’Ã¢â‚¬â€ ${height}`;
   }
   if (shape.type === 'circle') return `dia ${formatLength(pixelsToInches(shape.radius * 2))}`;
   return `dia ${formatLength(pixelsToInches(shape.radius * 2))}`;
@@ -557,6 +626,124 @@ function applySelectedHeight(feet) {
   pushHistory(snapshot); markDirty(); persist(); updateUi(); draw();
 }
 
+
+function selectedFloorItemsForLayer() {
+  const selection = hasFloorMultiSelection() ? state.multiSelected : singleFloorSelection();
+  return Object.entries(selection).flatMap(([kind, indexes]) => indexes.map((index) => state[kind][index]).filter(Boolean));
+}
+
+function selectedLayerValue() {
+  const items = selectedFloorItemsForLayer();
+  if (!items.length) return { value: '', mixed: false, missing: false, count: 0 };
+  const values = [...new Set(items.map((item) => layerAssignmentId(item.layerId) || ''))];
+  const value = values.length === 1 ? values[0] : '__mixed__';
+  return { value, mixed: values.length > 1, missing: value && value !== '__mixed__' && !normalizeLayerId(value), count: items.length };
+}
+
+function renderLayerControls() {
+  const select = $('#layerSelect'), list = $('#layerList');
+  if (!select || !list) return;
+  const current = selectedLayerValue();
+  select.replaceChildren();
+  if (!current.count) {
+    const option = document.createElement('option'); option.value = ''; option.textContent = 'No selection'; select.append(option); select.disabled = true;
+  } else {
+    if (current.mixed) {
+      const mixed = document.createElement('option'); mixed.value = '__mixed__'; mixed.textContent = 'Mixed layers'; mixed.disabled = true; select.append(mixed);
+    } else if (current.missing) {
+      const missing = document.createElement('option'); missing.value = current.value; missing.textContent = 'Missing layer (black)'; missing.disabled = true; select.append(missing);
+    }
+    const unassigned = document.createElement('option'); unassigned.value = ''; unassigned.textContent = 'Not assigned'; select.append(unassigned);
+    state.layers.forEach((layer) => { const option = document.createElement('option'); option.value = layer.id; option.textContent = layer.name; select.append(option); });
+    select.disabled = false; select.value = current.value;
+  }
+
+  list.replaceChildren();
+  if (!state.layers.length) {
+    const empty = document.createElement('p'); empty.className = 'layer-empty'; empty.textContent = 'No layers yet. Add a layer, then assign selected items to it.'; list.append(empty); return;
+  }
+  state.layers.forEach((layer) => {
+    const row = document.createElement('div'); row.className = 'layer-row';
+    const visible = document.createElement('input'); visible.type = 'checkbox'; visible.checked = layer.visible !== false; visible.title = 'Show layer';
+    const swatch = document.createElement('span'); swatch.className = 'layer-swatch'; swatch.style.backgroundColor = layer.color; swatch.style.opacity = String(normalizeLayerOpacity(layer.opacity));
+    const meta = document.createElement('div'); meta.className = 'layer-meta';
+    const name = document.createElement('strong'); name.textContent = layer.name;
+    const details = document.createElement('small'); details.textContent = `${Math.round(normalizeLayerOpacity(layer.opacity) * 100)}% opacity`;
+    const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'text-button layer-delete'; remove.textContent = '×'; remove.title = 'Delete layer'; remove.setAttribute('aria-label', `Delete ${layer.name}`);
+    const edit = document.createElement('button'); edit.type = 'button'; edit.className = 'text-button'; edit.textContent = 'Edit';
+    meta.append(name, details); row.append(visible, swatch, meta, remove, edit); list.append(row);
+    visible.addEventListener('change', () => setLayerVisibility(layer.id, visible.checked));
+    remove.addEventListener('click', () => openDeleteLayerDialog(layer.id));
+    edit.addEventListener('click', () => openLayerDialog(layer.id));
+  });
+}
+
+function createLayer() {
+  const snapshot = documentSnapshot();
+  const layer = { id: createLayerId(), name: `Layer ${state.layers.length + 1}`, color: DEFAULT_LAYER_COLOR, opacity: 1, visible: true };
+  state.layers.push(layer); pushHistory(snapshot); markDirty(); persist(); updateUi(); draw(); openLayerDialog(layer.id);
+}
+
+function setLayerVisibility(id, visible) {
+  const layer = state.layers.find((item) => item.id === id); if (!layer || layer.visible === visible) return;
+  const snapshot = documentSnapshot(); layer.visible = visible; pushHistory(snapshot); markDirty(); persist(); updateUi(); draw();
+}
+
+function applyLayerToSelection(id) {
+  const items = selectedFloorItemsForLayer(); if (!items.length) return;
+  const layerId = normalizeLayerId(id);
+  if (items.every((item) => (layerAssignmentId(item.layerId) || '') === (layerId || ''))) return;
+  const snapshot = documentSnapshot(); items.forEach((item) => { item.layerId = layerId; });
+  pushHistory(snapshot); markDirty(); persist(); updateUi(); draw();
+}
+
+
+function countLayerAssignments(id) {
+  return ['walls', 'labels', 'rulers', 'shapes', 'objects'].reduce((total, kind) => total + state[kind].filter((item) => layerAssignmentId(item.layerId) === id).length, 0);
+}
+
+function openDeleteLayerDialog(id) {
+  const layer = state.layers.find((item) => item.id === id); if (!layer) return;
+  state.deletingLayerId = id;
+  const count = countLayerAssignments(id);
+  $('#deleteLayerMessage').textContent = `Delete "${layer.name}"? ${count} assigned item${count === 1 ? '' : 's'} will remain on the canvas and render black at 100% opacity until reassigned.`;
+  $('#deleteLayerDialog').showModal();
+}
+
+function closeDeleteLayerDialog() { state.deletingLayerId = null; $('#deleteLayerDialog').close(); }
+
+function confirmDeleteLayer() {
+  const id = state.deletingLayerId;
+  if (!id || !state.layers.some((layer) => layer.id === id)) { closeDeleteLayerDialog(); return; }
+  const snapshot = documentSnapshot();
+  state.layers = state.layers.filter((layer) => layer.id !== id);
+  if (state.editingLayerId === id && $('#layerDialog').open) closeLayerDialog();
+  pushHistory(snapshot); markDirty(); persist(); updateUi(); draw(); closeDeleteLayerDialog();
+}
+function openLayerDialog(id) {
+  const layer = state.layers.find((item) => item.id === id); if (!layer) return;
+  state.editingLayerId = id;
+  $('#layerName').value = layer.name;
+  $('#layerColor').value = normalizeColor(layer.color, DEFAULT_LAYER_COLOR);
+  $('#layerColorValue').textContent = $('#layerColor').value;
+  $('#layerOpacity').value = String(Math.round(normalizeLayerOpacity(layer.opacity) * 100));
+  $('#layerOpacityValue').textContent = `${$('#layerOpacity').value}%`;
+  $('#layerDialog').showModal();
+}
+
+function closeLayerDialog() { state.editingLayerId = null; $('#layerDialog').close(); }
+
+function saveLayerDialog() {
+  const layer = state.layers.find((item) => item.id === state.editingLayerId); if (!layer) { closeLayerDialog(); return; }
+  const next = {
+    name: normalizeLayerName($('#layerName').value, layer.name),
+    color: normalizeColor($('#layerColor').value, DEFAULT_LAYER_COLOR),
+    opacity: normalizeLayerOpacity(Number($('#layerOpacity').value) / 100),
+  };
+  if (layer.name === next.name && layer.color === next.color && normalizeLayerOpacity(layer.opacity) === next.opacity) { closeLayerDialog(); return; }
+  const snapshot = documentSnapshot(); Object.assign(layer, next);
+  pushHistory(snapshot); markDirty(); persist(); updateUi(); draw(); closeLayerDialog();
+}
 function renderWallList() {
   const list = $('#wallList'); list.replaceChildren();
   if (!state.walls.length) {
@@ -622,13 +809,20 @@ function updateUi() {
   const selectedWall = state.selectedWall !== null ? state.walls[state.selectedWall] : null;
   $('#wallWidth').disabled = !selectedWall;
   if (selectedWall) { $('#wallWidth').value = String(selectedWall.thickness || state.wallWidth); $('#wallWidthValue').textContent = (selectedWall.thickness || state.wallWidth) + ' in'; }
-  else { $('#wallWidthValue').textContent = '—'; }
+  else { $('#wallWidthValue').textContent = 'ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â'; }
   const selectedLine = selectedLineElement();
-  $('#lineColor').disabled = !selectedLine; $('#lineShade').disabled = !selectedLine;
-  if (selectedLine) {
+  const selectedLineLayer = selectedLine ? layerForItem(selectedLine.item) : null;
+  const selectedLineMissingLayer = selectedLine ? itemHasMissingLayer(selectedLine.item) : false;
+  $('#lineColor').disabled = !selectedLine || !!selectedLineLayer || selectedLineMissingLayer; $('#lineShade').disabled = !selectedLine || !!selectedLineLayer || selectedLineMissingLayer;
+  if (selectedLineLayer) {
+    const shade = Math.round(normalizeLayerOpacity(selectedLineLayer.opacity) * 100);
+    $('#lineColor').value = selectedLineLayer.color; $('#lineColorValue').textContent = 'Layer'; $('#lineShade').value = String(shade); $('#lineShadeValue').textContent = `${shade}%`;
+  } else if (selectedLineMissingLayer) {
+    $('#lineColor').value = '#000000'; $('#lineColorValue').textContent = 'Missing'; $('#lineShade').value = '100'; $('#lineShadeValue').textContent = '100%';
+  } else if (selectedLine) {
     const color = normalizeColor(selectedLine.item.color, selectedLine.fallback), shade = Math.round(normalizeShade(selectedLine.item.shade) * 100);
     $('#lineColor').value = color; $('#lineColorValue').textContent = color; $('#lineShade').value = String(shade); $('#lineShadeValue').textContent = `${shade}%`;
-  } else { $('#lineColorValue').textContent = '—'; $('#lineShadeValue').textContent = '—'; }
+  } else { $('#lineColorValue').textContent = 'â€”'; $('#lineShadeValue').textContent = 'â€”'; }
   const sizeInfo = selectedSizeInfo();
   $('#elementLength').disabled = !sizeInfo; $('#elementHeight').disabled = !sizeInfo?.height;
   $('#elementLengthLabel').textContent = sizeInfo?.lengthLabel || 'Selected length (ft)'; $('#elementLength').value = sizeInfo?.length || '';
@@ -636,7 +830,8 @@ function updateUi() {
   const selectedLabel = state.selectedLabel !== null ? state.labels[state.selectedLabel] : null;
   $('#labelSize').disabled = !selectedLabel;
   if (selectedLabel) { $('#labelSize').value = String(selectedLabel.fontSize || 16); $('#labelSizeValue').textContent = `${selectedLabel.fontSize || 16}px`; }
-  else { $('#labelSizeValue').textContent = '—'; }
+  else { $('#labelSizeValue').textContent = 'ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â'; }
+  renderLayerControls();
   renderWallList();
 }
 
@@ -653,10 +848,11 @@ canvas.addEventListener('pointerdown', (event) => {
   if (event.button !== 0) return;
   const point = canvasPoint(event);
   if (state.tool === 'ruler') {
-    let index = state.selectedRuler, part = index !== null && state.rulers[index] ? rulerPartAtEvent(event, state.rulers[index]) : null;
+    let index = state.selectedRuler, part = index !== null && state.rulers[index] && floorItemVisible(state.rulers[index]) ? rulerPartAtEvent(event, state.rulers[index]) : null;
     if (!part) {
       index = -1;
       for (let i = state.rulers.length - 1; i >= 0; i -= 1) {
+        if (!floorItemVisible(state.rulers[i])) continue;
         part = rulerPartAtEvent(event, state.rulers[i]);
         if (part) { index = i; break; }
       }
@@ -672,10 +868,10 @@ canvas.addEventListener('pointerdown', (event) => {
     canvas.setPointerCapture(event.pointerId); draw(); return;
   }
   if (state.tool === 'shapes') {
-    let index = state.selectedShape, part = index !== null && state.shapes[index] ? shapePartAtEvent(event, state.shapes[index]) : null;
+    let index = state.selectedShape, part = index !== null && state.shapes[index] && floorItemVisible(state.shapes[index]) ? shapePartAtEvent(event, state.shapes[index]) : null;
     if (!part) {
       index = -1;
-      for (let i = state.shapes.length - 1; i >= 0; i -= 1) { part = shapePartAtEvent(event, state.shapes[i]); if (part) { index = i; break; } }
+      for (let i = state.shapes.length - 1; i >= 0; i -= 1) { if (!floorItemVisible(state.shapes[i])) continue; part = shapePartAtEvent(event, state.shapes[i]); if (part) { index = i; break; } }
     }
     if (part && index >= 0) {
       state.selectedShape = index; state.selectedWall = null; state.selectedObject = null; state.shapeDragMode = part; state.shapeDragSnapshot = documentSnapshot();
@@ -687,7 +883,7 @@ canvas.addEventListener('pointerdown', (event) => {
     canvas.setPointerCapture(event.pointerId); draw(); return;
   }
   if (state.tool === 'objects') {
-    let index = state.selectedObject, part = index !== null && state.objects[index] ? objectPartAtEvent(event, state.objects[index]) : null;
+    let index = state.selectedObject, part = index !== null && state.objects[index] && floorItemVisible(state.objects[index]) ? objectPartAtEvent(event, state.objects[index]) : null;
     if (!part) { index = objectAtPoint(rawCanvasPoint(event)); part = index >= 0 ? objectPartAtEvent(event, state.objects[index]) : null; }
     if (part && index >= 0) {
       state.selectedObject = index; state.selectedShape = null; state.selectedWall = null; state.objectDragMode = part; state.objectDragSnapshot = documentSnapshot();
@@ -715,14 +911,14 @@ canvas.addEventListener('pointerdown', (event) => {
     const rawPoint = rawCanvasPoint(event);
     let index = state.selectedWall;
     let handle = null;
-    if (index !== null && state.walls[index]) {
+    if (index !== null && state.walls[index] && floorItemVisible(state.walls[index])) {
       if (Math.hypot(rawPoint.x - state.walls[index].a.x, rawPoint.y - state.walls[index].a.y) < 14 / state.zoom) handle = 'a';
       else if (Math.hypot(rawPoint.x - state.walls[index].b.x, rawPoint.y - state.walls[index].b.y) < 14 / state.zoom) handle = 'b';
     }
     if (!handle) {
       index = -1;
       for (let i = state.walls.length - 1; i >= 0; i -= 1) {
-        if (pointToSegmentDistance(rawPoint, state.walls[i].a, state.walls[i].b) < 18 / state.zoom) { index = i; break; }
+        if (floorItemVisible(state.walls[i]) && pointToSegmentDistance(rawPoint, state.walls[i].a, state.walls[i].b) < 18 / state.zoom) { index = i; break; }
       }
       state.selectedWall = index >= 0 ? index : null;
       if (state.selectedWall !== null) state.selectedShape = null;
@@ -739,7 +935,7 @@ canvas.addEventListener('pointerdown', (event) => {
     if (labelIndex >= 0) { commitLabels(state.labels.filter((_, i) => i !== labelIndex)); return; }
     let rulerIndex = -1;
     for (let i = state.rulers.length - 1; i >= 0; i -= 1) {
-      if (pointToSegmentDistance(raw, state.rulers[i].a, state.rulers[i].b) < 12 / state.zoom) { rulerIndex = i; break; }
+      if (floorItemVisible(state.rulers[i]) && pointToSegmentDistance(raw, state.rulers[i].a, state.rulers[i].b) < 12 / state.zoom) { rulerIndex = i; break; }
     }
     if (rulerIndex >= 0) { commitRulers(state.rulers.filter((_, i) => i !== rulerIndex)); return; }
     const objectIndex = objectAtPoint(raw);
@@ -748,7 +944,7 @@ canvas.addEventListener('pointerdown', (event) => {
     if (shapeIndex >= 0) { commitShapes(state.shapes.filter((_, i) => i !== shapeIndex)); return; }
     let index = -1;
     for (let i = state.walls.length - 1; i >= 0; i -= 1) {
-      if (pointToSegmentDistance(raw, state.walls[i].a, state.walls[i].b) < 18 / state.zoom) { index = i; break; }
+      if (floorItemVisible(state.walls[i]) && pointToSegmentDistance(raw, state.walls[i].a, state.walls[i].b) < 18 / state.zoom) { index = i; break; }
     }
     if (index >= 0) commit(state.walls.filter((_, i) => i !== index)); return;
   }
@@ -898,12 +1094,12 @@ function setTool(tool) {
   syncSelectModeUi();
   document.querySelectorAll('[data-tool]').forEach((button) => button.classList.toggle('active', button.dataset.tool === tool));
   const content = {
-    wall: ['Wall tool', 'Drag between grid points · Hold Shift for a straight wall'],
+    wall: ['Wall tool', 'Drag between grid points Ãƒâ€šÃ‚Â· Hold Shift for a straight wall'],
     edit: [state.selectMode === 'highlight' ? 'Highlight Select' : 'Select tool', state.selectMode === 'highlight' ? 'Drag a box around complete items; drag a highlighted item to move the group' : 'Select one wall, then drag either endpoint'],
     ruler: ['Ruler tool', 'Drag to measure; select and drag a line, endpoint, or label'],
     shapes: ['Shapes tool', 'Choose a shape, then drag on the canvas; selected shapes can be moved or resized'],
     objects: ['Objects tool', 'Choose a car or person; click to insert, then drag to move or resize'],
-    text: ['Text tool', 'Click to add · Drag to move · Double-click to edit'],
+    text: ['Text tool', 'Click to add Ãƒâ€šÃ‚Â· Drag to move Ãƒâ€šÃ‚Â· Double-click to edit'],
     erase: ['Erase tool', 'Click a wall to remove it'], pan: ['Pan tool', 'Drag to move the grid and plan'],
   }[tool];
   $('#modeLabel').textContent = content[0]; $('#modeHelp').textContent = content[1]; setCanvasCursor(); updateUi(); draw();
@@ -939,26 +1135,30 @@ function applyProject(project, options = {}) {
   }))) throw new Error('This plan contains invalid shapes.');
   if (project.objects !== undefined && (!Array.isArray(project.objects) || !project.objects.every((object) =>
     object && Object.prototype.hasOwnProperty.call(OBJECT_DEFS, object.symbol) && validPoint(object) && Number(object.width) > 0 && Number(object.height) > 0))) throw new Error('This plan contains invalid objects.');
+  if (project.layers !== undefined && (!Array.isArray(project.layers) || !project.layers.every((layer) => layer && (layer.id === undefined || typeof layer.id === 'string'))))
+    throw new Error('This plan contains invalid layers.');
+  state.layers = normalizeLayers(project.layers || []);
   const legacyThickness = Number(project.settings?.wallWidth);
   state.walls = project.walls.map((wall) => {
     const thickness = Number(wall.thickness);
     const fallback = Number.isFinite(legacyThickness) ? Math.max(3, Math.min(12, legacyThickness)) : 6;
-    return { a: { x: Number(wall.a.x), y: Number(wall.a.y) }, b: { x: Number(wall.b.x), y: Number(wall.b.y) }, thickness: Number.isFinite(thickness) ? Math.max(3, Math.min(12, thickness)) : fallback, color: normalizeColor(wall.color, DEFAULT_WALL_COLOR), shade: normalizeShade(wall.shade) };
+    return { a: { x: Number(wall.a.x), y: Number(wall.a.y) }, b: { x: Number(wall.b.x), y: Number(wall.b.y) }, thickness: Number.isFinite(thickness) ? Math.max(3, Math.min(12, thickness)) : fallback, color: normalizeColor(wall.color, DEFAULT_WALL_COLOR), shade: normalizeShade(wall.shade), layerId: layerAssignmentId(wall.layerId) };
   });
   state.labels = (project.labels || []).map((label) => {
     const size = Number(label.fontSize);
-    return { text: label.text.slice(0, 200), x: Number(label.x), y: Number(label.y), fontSize: Number.isFinite(size) ? Math.max(10, Math.min(48, Math.round(size))) : 16 };
+    return { text: label.text.slice(0, 200), x: Number(label.x), y: Number(label.y), fontSize: Number.isFinite(size) ? Math.max(10, Math.min(48, Math.round(size))) : 16, layerId: layerAssignmentId(label.layerId) };
   });
   state.rulers = (project.rulers || []).map((ruler) => ({
     a: { x: Number(ruler.a.x), y: Number(ruler.a.y) }, b: { x: Number(ruler.b.x), y: Number(ruler.b.y) },
     ...(validPoint(ruler.labelOffset) ? { labelOffset: { x: Number(ruler.labelOffset.x), y: Number(ruler.labelOffset.y) } } : {}),
+    layerId: layerAssignmentId(ruler.layerId),
   }));
   state.shapes = (project.shapes || []).map((shape) => {
-    const style = { color: normalizeColor(shape.color, DEFAULT_SHAPE_COLOR), shade: normalizeShade(shape.shade) };
+    const style = { color: normalizeColor(shape.color, DEFAULT_SHAPE_COLOR), shade: normalizeShade(shape.shade), layerId: layerAssignmentId(shape.layerId) };
     if (shape.type === 'square' || shape.type === 'rectangle' || shape.type === 'line') return { type: shape.type, a: { x: Number(shape.a.x), y: Number(shape.a.y) }, b: { x: Number(shape.b.x), y: Number(shape.b.y) }, ...style };
     return { type: shape.type, center: { x: Number(shape.center.x), y: Number(shape.center.y) }, radius: Math.max(0, Number(shape.radius)), ...style };
   });
-  state.objects = (project.objects || []).map((object) => ({ symbol: object.symbol, x: Number(object.x), y: Number(object.y), width: Math.max(1, Number(object.width)), height: Math.max(1, Number(object.height)) }));
+  state.objects = (project.objects || []).map((object) => ({ symbol: object.symbol, x: Number(object.x), y: Number(object.y), width: Math.max(1, Number(object.width)), height: Math.max(1, Number(object.height)), layerId: layerAssignmentId(object.layerId) }));
   if (typeof loadElevationProject === 'function') loadElevationProject(project.elevations);
   if ([1, 3, 6, 12, 24].includes(Number(project.settings?.gridInches))) state.gridInches = Number(project.settings.gridInches);
   if (Number(project.settings?.wallWidth) >= 3 && Number(project.settings?.wallWidth) <= 12) state.wallWidth = Number(project.settings.wallWidth);
@@ -970,7 +1170,7 @@ function applyProject(project, options = {}) {
   state.serverId = fromServer ? options.serverId : null;
   state.serverName = fromServer ? (options.serverName || 'Untitled plan') : 'Untitled plan';
   state.dirty = false;
-  state.history = []; state.future = []; state.selectedWall = null; state.selectedLabel = null; state.selectedRuler = null; state.selectedShape = null; state.selectedObject = null;
+  state.history = []; state.future = []; state.selectedWall = null; state.selectedLabel = null; state.selectedRuler = null; state.selectedShape = null; state.selectedObject = null; clearFloorMultiSelection();
   persist(); updateUi(); draw();
 }
 
@@ -994,7 +1194,7 @@ async function saveServerPlan({ saveAsNew = false } = {}) {
   const name = prompt('Plan name:', state.serverName || 'Untitled plan');
   if (!name || !name.trim()) return false;
   try {
-    $('#saveStatus').textContent = saveAsNew ? 'Saving new plan…' : 'Saving to server…';
+    $('#saveStatus').textContent = saveAsNew ? 'Saving new planÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦' : 'Saving to serverÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦';
     const payload = await apiRequest('./api.php', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: saveAsNew ? null : state.serverId, name: name.trim().slice(0, 100), plan: projectData() }),
@@ -1006,7 +1206,7 @@ async function saveServerPlan({ saveAsNew = false } = {}) {
 
 async function openServerPlans() {
   const list = $('#serverPlanList'); list.replaceChildren();
-  const loading = document.createElement('p'); loading.className = 'dialog-message'; loading.textContent = 'Loading plans…'; list.append(loading);
+  const loading = document.createElement('p'); loading.className = 'dialog-message'; loading.textContent = 'Loading plansÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦'; list.append(loading);
   $('#serverDialog').showModal();
   try {
     const payload = await apiRequest('./api.php'); list.replaceChildren();
@@ -1029,12 +1229,12 @@ async function openServerPlans() {
 }
 
 function resetProject() {
-  state.walls = []; state.labels = []; state.rulers = []; state.shapes = []; state.objects = []; state.history = []; state.future = [];
+  state.walls = []; state.labels = []; state.rulers = []; state.shapes = []; state.objects = []; state.layers = []; state.history = []; state.future = [];
   state.selectedWall = null; state.selectedLabel = null; state.selectedRuler = null; state.selectedShape = null; state.selectedObject = null; state.editingHandle = null; state.draggingLabel = false;
   state.start = null; state.preview = null; state.zoom = 1; state.offset = { x: 0, y: 0 };
   state.gridInches = 12; state.grid = gridPixels(12); state.wallWidth = 6;
   state.showText = true; state.showDimensions = true;
-  state.serverId = null; state.serverName = 'Untitled plan'; state.dirty = false;
+  state.serverId = null; state.serverName = 'Untitled plan'; state.editingLayerId = null; state.deletingLayerId = null; state.dirty = false;
   if (typeof resetElevationProject === 'function') resetElevationProject(false);
   persist(); updateUi(); draw(); setTool('wall'); $('#saveStatus').textContent = 'New project';
 }
@@ -1114,6 +1314,18 @@ $('#labelSize').addEventListener('change', () => {
   if (previous !== current) { pushHistory(state.labelSizeSnapshot); persist(); }
   state.labelSizeSnapshot = null; updateUi(); draw();
 });
+$('#layerSelect').addEventListener('change', (event) => { if (event.target.value !== '__mixed__') applyLayerToSelection(event.target.value); });
+$('#addLayerButton').addEventListener('click', createLayer);
+$('#layerColor').addEventListener('input', (event) => { $('#layerColorValue').textContent = normalizeColor(event.target.value, DEFAULT_LAYER_COLOR); });
+$('#layerOpacity').addEventListener('input', (event) => { $('#layerOpacityValue').textContent = `${event.target.value}%`; });
+$('#saveLayerEdit').addEventListener('click', saveLayerDialog);
+$('#cancelLayerEdit').addEventListener('click', closeLayerDialog);
+$('#closeLayerDialog').addEventListener('click', closeLayerDialog);
+$('#layerDialog').addEventListener('click', (event) => { if (event.target === $('#layerDialog')) closeLayerDialog(); });
+$('#confirmDeleteLayer').addEventListener('click', confirmDeleteLayer);
+$('#cancelDeleteLayer').addEventListener('click', closeDeleteLayerDialog);
+$('#closeDeleteLayerDialog').addEventListener('click', closeDeleteLayerDialog);
+$('#deleteLayerDialog').addEventListener('click', (event) => { if (event.target === $('#deleteLayerDialog')) closeDeleteLayerDialog(); });
 $('#gridSize').addEventListener('change', (event) => {
   const oldGrid = state.grid; state.gridInches = Number(event.target.value); state.grid = gridPixels(state.gridInches);
   const scale = state.grid / oldGrid;
@@ -1363,7 +1575,7 @@ function drawElevation() {
 }
 
 function elevationItemName(item) { return item.type === 'dimension' ? 'Dimension' : item.type === 'rect' ? 'Rectangle' : item.type === 'text' ? 'Text' : 'Line'; }
-function elevationItemDetail(item) { if (item.type === 'text') return item.text; if (item.type === 'rect') return `${formatLength(elevationPixelsToInches(Math.abs(item.b.x - item.a.x)))} × ${formatLength(elevationPixelsToInches(Math.abs(item.b.y - item.a.y)))}`; return formatLength(elevationPixelsToInches(Math.hypot(item.b.x - item.a.x, item.b.y - item.a.y))); }
+function elevationItemDetail(item) { if (item.type === 'text') return item.text; if (item.type === 'rect') return `${formatLength(elevationPixelsToInches(Math.abs(item.b.x - item.a.x)))} ÃƒÆ’Ã¢â‚¬â€ ${formatLength(elevationPixelsToInches(Math.abs(item.b.y - item.a.y)))}`; return formatLength(elevationPixelsToInches(Math.hypot(item.b.x - item.a.x, item.b.y - item.a.y))); }
 function renderElevationList() {
   const list = $('#elevationList'); if (!list) return; list.replaceChildren(); const items = currentElevation().items;
   if (!items.length) { const empty = document.createElement('li'); empty.className = 'empty-list'; empty.textContent = 'Draw elevation lines, dimensions, rectangles, or labels.'; list.append(empty); }

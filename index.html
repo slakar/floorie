@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#f3efe5" />
-    <title>Gridline — Floor Plan Studio</title>
+    <title>Gridline - Floor Plan Studio</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
@@ -41,51 +41,51 @@
             <span class="tool-icon wall-icon"></span><span>Wall</span>
           </button>
           <button class="tool" data-tool="edit" title="Select or edit wall endpoints (V)">
-            <span class="tool-icon edit-icon">↔</span><span>Edit</span>
+            <span class="tool-icon edit-icon">â†”</span><span>Edit</span>
           </button>
           <button class="tool" data-tool="ruler" title="Measure between any two points (R)">
-            <span class="tool-icon ruler-icon">↦</span><span>Ruler</span>
+            <span class="tool-icon ruler-icon">|-|</span><span>Ruler</span>
           </button>
           <button class="tool" data-tool="shapes" title="Insert shapes (S)">
-            <span class="tool-icon shapes-icon">◇</span><span>Shapes</span>
+            <span class="tool-icon shapes-icon">â–¡</span><span>Shapes</span>
           </button>
           <button class="tool" data-tool="objects" title="Insert columns (O)">
-            <span class="tool-icon object-icon">■</span><span>Column</span>
+            <span class="tool-icon object-icon">â– </span><span>Column</span>
           </button>
           <button class="tool" data-tool="text" title="Add and move text labels (T)">
             <span class="tool-icon text-icon">T</span><span>Text</span>
           </button>
           <button class="tool" data-tool="erase" title="Erase walls (E)">
-            <span class="tool-icon erase-icon">⌫</span><span>Erase</span>
+            <span class="tool-icon erase-icon">Del</span><span>Erase</span>
           </button>
           <button class="tool" data-tool="pan" title="Move the grid (P)">
-            <span class="tool-icon pan-icon">✥</span><span>Pan</span>
+            <span class="tool-icon pan-icon">+</span><span>Pan</span>
           </button>
           <div class="tool-divider"></div>
-          <button id="undoButton" class="tool compact" title="Undo (Ctrl+Z)"><span class="tool-icon">↶</span><span>Undo</span></button>
-          <button id="redoButton" class="tool compact" title="Redo (Ctrl+Shift+Z)"><span class="tool-icon">↷</span><span>Redo</span></button>
-          <button id="centerButton" class="tool compact" title="Center the grid"><span class="tool-icon">⌾</span><span>Center</span></button>
+          <button id="undoButton" class="tool compact" title="Undo (Ctrl+Z)"><span class="tool-icon">Undo</span><span>Undo</span></button>
+          <button id="redoButton" class="tool compact" title="Redo (Ctrl+Shift+Z)"><span class="tool-icon">Redo</span><span>Redo</span></button>
+          <button id="centerButton" class="tool compact" title="Center the grid"><span class="tool-icon">O</span><span>Center</span></button>
         </aside>
         <aside id="shapePalette" class="shape-palette" aria-label="Shape choices" hidden>
-          <button class="shape-choice active" data-shape="square" title="Square"><span>□</span><small>Square</small></button>
-          <button class="shape-choice" data-shape="rectangle" title="Rectangle"><span>▭</span><small>Rect</small></button>
-          <button class="shape-choice" data-shape="circle" title="Circle"><span>○</span><small>Circle</small></button>
-          <button class="shape-choice" data-shape="line" title="Line"><span>╱</span><small>Line</small></button>
-          <button class="shape-choice" data-shape="semicircle" title="Semi-circle"><span>◠</span><small>Half</small></button>
+          <button class="shape-choice active" data-shape="square" title="Square"><span>â–¡</span><small>Square</small></button>
+          <button class="shape-choice" data-shape="rectangle" title="Rectangle"><span>â–­</span><small>Rect</small></button>
+          <button class="shape-choice" data-shape="circle" title="Circle"><span>â—‹</span><small>Circle</small></button>
+          <button class="shape-choice" data-shape="line" title="Line"><span>/</span><small>Line</small></button>
+          <button class="shape-choice" data-shape="semicircle" title="Semi-circle"><span>âˆ©</span><small>Half</small></button>
         </aside>
         <aside id="objectPalette" class="shape-palette object-palette" aria-label="Object choices" hidden>
-          <button class="shape-choice active" data-object="column" title="Column"><span>■</span><small>Column</small></button>
+          <button class="shape-choice active" data-object="column" title="Column"><span>â– </span><small>Column</small></button>
         </aside>
         <aside id="selectPalette" class="shape-palette select-palette" aria-label="Selection choices" hidden>
-          <button class="shape-choice active" data-select-mode="single" title="Select one item"><span>✥</span><small>Select</small></button>
-          <button class="shape-choice" data-select-mode="highlight" title="Box select multiple items"><span>▣</span><small>Highlight</small></button>
+          <button class="shape-choice active" data-select-mode="single" title="Select one item"><span>+</span><small>Select</small></button>
+          <button class="shape-choice" data-select-mode="highlight" title="Box select multiple items"><span>â–¡</span><small>Highlight</small></button>
         </aside>
 
         <section class="canvas-shell">
           <canvas id="planCanvas" aria-label="Floor plan drawing canvas"></canvas>
-          <div class="canvas-help"><span id="modeLabel">Wall tool</span> · <span id="modeHelp" class="help-copy">Drag between grid points · Hold Shift for a straight wall</span></div>
+          <div class="canvas-help"><span id="modeLabel">Wall tool</span> - <span id="modeHelp" class="help-copy">Drag between grid points - Hold Shift for a straight wall</span></div>
           <div class="zoom-controls">
-            <button id="zoomOut" aria-label="Zoom out">−</button>
+            <button id="zoomOut" aria-label="Zoom out">-</button>
             <span id="zoomLabel">100%</span>
             <button id="zoomIn" aria-label="Zoom in">+</button>
           </div>
@@ -125,21 +125,21 @@
             <span>Selected line thickness</span>
             <div class="range-row">
               <input id="wallWidth" type="range" min="3" max="12" value="6" disabled />
-              <output id="wallWidthValue">—</output>
+              <output id="wallWidthValue">0</output>
             </div>
           </label>
           <label class="field">
             <span>Selected line color</span>
             <div class="color-row">
               <input id="lineColor" type="color" value="#30332d" disabled />
-              <output id="lineColorValue">—</output>
+              <output id="lineColorValue">0</output>
             </div>
           </label>
           <label class="field">
             <span>Selected line shade</span>
             <div class="range-row">
               <input id="lineShade" type="range" min="20" max="100" step="1" value="100" disabled />
-              <output id="lineShadeValue">—</output>
+              <output id="lineShadeValue">0</output>
             </div>
           </label>
           <label class="field">
@@ -154,7 +154,7 @@
             <span>Selected text size</span>
             <div class="range-row">
               <input id="labelSize" type="range" min="10" max="48" step="1" value="16" disabled />
-              <output id="labelSizeValue">—</output>
+              <output id="labelSizeValue">0</output>
             </div>
           </label>
           <section class="layers-panel" aria-label="Floor plan layers">
@@ -185,19 +185,19 @@
             <span class="tool-icon">□</span><span>Rect</span>
           </button>
           <button class="tool" data-elev-tool="dimension" title="Draw dimensions">
-            <span class="tool-icon">↔</span><span>Dim</span>
+            <span class="tool-icon">|-|</span><span>Dim</span>
           </button>
           <button class="tool" data-elev-tool="text" title="Add text labels">
             <span class="tool-icon text-icon">T</span><span>Text</span>
           </button>
           <button class="tool" data-elev-tool="select" title="Select and move items">
-            <span class="tool-icon">✥</span><span>Select</span>
+            <span class="tool-icon">+</span><span>Select</span>
           </button>
           <button class="tool" data-elev-tool="erase" title="Erase elevation items">
-            <span class="tool-icon erase-icon">⌫</span><span>Erase</span>
+            <span class="tool-icon erase-icon">Del</span><span>Erase</span>
           </button>
           <button class="tool" data-elev-tool="pan" title="Pan elevation canvas">
-            <span class="tool-icon pan-icon">✥</span><span>Pan</span>
+            <span class="tool-icon pan-icon">+</span><span>Pan</span>
           </button>
           <div class="tool-divider"></div>
           <button id="elevUndoButton" class="tool compact" title="Undo elevation change" disabled>
@@ -208,15 +208,15 @@
           </button>
         </aside>
         <aside id="elevSelectPalette" class="shape-palette elevation-select-palette" aria-label="Elevation selection choices" hidden>
-          <button class="shape-choice active" data-elev-select-mode="single" title="Select one elevation item"><span>✥</span><small>Select</small></button>
-          <button class="shape-choice" data-elev-select-mode="highlight" title="Box select multiple elevation items"><span>▣</span><small>Highlight</small></button>
+          <button class="shape-choice active" data-elev-select-mode="single" title="Select one elevation item"><span>+</span><small>Select</small></button>
+          <button class="shape-choice" data-elev-select-mode="highlight" title="Box select multiple elevation items"><span>□</span><small>Highlight</small></button>
         </aside>
 
         <section class="canvas-shell">
           <canvas id="elevationCanvas" aria-label="Home elevation drawing canvas"></canvas>
-          <div class="canvas-help"><span id="elevModeLabel">Line tool</span> · <span id="elevModeHelp" class="help-copy">Drag to draw walls, roof lines, trim, and other elevation outlines</span></div>
+          <div class="canvas-help"><span id="modeLabel">Wall tool</span> - <span id="modeHelp" class="help-copy">Drag between grid points - Hold Shift for a straight wall</span></div>
           <div class="zoom-controls">
-            <button id="elevZoomOut" aria-label="Zoom out">−</button>
+            <button id="elevZoomOut" aria-label="Zoom out">-</button>
             <span id="elevZoomLabel">100%</span>
             <button id="elevZoomIn" aria-label="Zoom in">+</button>
           </div>
@@ -279,14 +279,14 @@
     <dialog id="serverDialog" class="server-dialog">
       <div class="dialog-heading">
         <div><span class="eyebrow">Server plans</span><h2>Open a floor plan</h2></div>
-        <button id="closeServerDialog" class="dialog-close" aria-label="Close">×</button>
+        <button id="closeServerDialog" class="dialog-close" aria-label="Close">X</button>
       </div>
       <div id="serverPlanList" class="server-plan-list"></div>
     </dialog>
     <dialog id="newProjectDialog" class="server-dialog confirm-dialog">
       <div class="dialog-heading">
         <div><span class="eyebrow">Unsaved changes</span><h2>Save before starting over?</h2></div>
-        <button id="cancelNewProjectIcon" class="dialog-close" aria-label="Cancel">×</button>
+        <button id="cancelNewProjectIcon" class="dialog-close" aria-label="Cancel">X</button>
       </div>
       <p class="confirm-message">Your current plan has changes that have not been saved. Save them before opening a new canvas?</p>
       <div class="confirm-actions">
@@ -298,7 +298,6 @@
     <dialog id="layerDialog" class="server-dialog layer-dialog">
       <div class="dialog-heading">
         <div><span class="eyebrow">Layer properties</span><h2>Edit layer</h2></div>
-        <button id="closeLayerDialog" class="dialog-close" aria-label="Close">Ã—</button>
       </div>
       <div class="layer-dialog-body">
         <label class="field">
@@ -328,7 +327,6 @@
     <dialog id="deleteLayerDialog" class="server-dialog confirm-dialog">
       <div class="dialog-heading">
         <div><span class="eyebrow">Delete layer</span><h2>Delete this layer?</h2></div>
-        <button id="closeDeleteLayerDialog" class="dialog-close" aria-label="Cancel">Ã—</button>
       </div>
       <p id="deleteLayerMessage" class="confirm-message">Items assigned to this layer will remain on the canvas and render black at 100% opacity until reassigned.</p>
       <div class="confirm-actions">

@@ -130,7 +130,7 @@ kbd { min-width: 25px; padding: 4px 6px; border: 1px solid #ccc7bb; border-botto
 .layer-meta strong { overflow: hidden; color: #292b26; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .layer-meta small { color: #777970; font-size: 9px; }
 .layer-row .text-button { font-size: 10px; }
-.layer-delete { width: 22px; height: 22px; padding: 0; border-radius: 3px; color: #a34329; font-size: 17px; line-height: 20px; }
+.layer-delete { padding: 0 2px; color: #a34329; white-space: nowrap; }
 .layer-empty { margin: 0; color: #8a8b84; font-size: 11px; line-height: 1.5; }
 .layer-dialog { width: min(460px, calc(100vw - 40px)); }
 .layer-dialog-body { padding: 20px 24px 4px; }

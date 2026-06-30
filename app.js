@@ -9,9 +9,9 @@ const DEFAULT_LAYER_COLOR = '#30332d';
 const COLOR_PATTERN = /^#[0-9a-f]{6}$/i;
 var elevationReady = false;
 const OBJECT_DEFS = {
-  car: { label: 'Car', src: './assets/car.svg', widthFt: 15, heightFt: 6 },
-  person: { label: 'Person', src: './assets/person.svg', widthFt: 2, heightFt: 2 },
+  column: { label: 'Column', widthFt: 1, heightFt: 1 },
 };
+const LEGACY_OBJECT_SYMBOLS = new Set(['car', 'person']);
 
 function readLocalProject() {
   try {
@@ -34,7 +34,7 @@ const state = {
   selectedRuler: null, rulerDragMode: null, rulerDragSnapshot: null, rulerDragStart: null, rulerDragOriginal: null,
   drawingShape: false, shapeStart: null, shapePreview: null, shapeKind: 'square', selectedShape: null,
   shapeDragMode: null, shapeDragSnapshot: null, shapeDragStart: null, shapeDragOriginal: null,
-  objectKind: 'car', selectedObject: null, objectDragMode: null, objectDragSnapshot: null, objectDragStart: null, objectDragOriginal: null,
+  objectKind: 'column', selectedObject: null, objectDragMode: null, objectDragSnapshot: null, objectDragStart: null, objectDragOriginal: null,
   wallSizeSnapshot: null, lineStyleSnapshot: null,
   selectMode: 'single', multiSelected: { walls: [], labels: [], rulers: [], shapes: [], objects: [] }, boxSelecting: false, boxStart: null, boxCurrent: null,
   multiDragSnapshot: null, multiDragStart: null, multiDragSelection: null, floorClipboard: null,
@@ -51,7 +51,7 @@ const state = {
 state.grid = gridPixels(state.gridInches);
 
 const objectTintCache = new Map();
-const objectImages = Object.fromEntries(Object.entries(OBJECT_DEFS).map(([key, def]) => {
+const objectImages = Object.fromEntries(Object.entries(OBJECT_DEFS).filter(([, def]) => def.src).map(([key, def]) => {
   const image = new Image(); image.onload = () => { objectTintCache.clear(); draw(); }; image.src = def.src; return [key, image];
 }));
 
@@ -123,6 +123,7 @@ state.layers = normalizeLayers(state.layers);
 normalizeFloorLayerAssignments();
 const pixelsToInches = (pixels) => pixels / state.grid * state.gridInches;
 const feetToPixels = (feet) => feet * 12 / state.gridInches * state.grid;
+state.objects = state.objects.map(normalizeObjectRecord).filter(Boolean);
 const trimNumber = (value, places = 2) => Number(value.toFixed(places)).toString();
 const screenPoint = (event) => {
   const rect = canvas.getBoundingClientRect();
@@ -360,9 +361,30 @@ function updateShapeDrag(event) {
   shape[state.shapeDragMode] = point;
 }
 
+function normalizeObjectSymbol(symbol) {
+  if (Object.prototype.hasOwnProperty.call(OBJECT_DEFS, symbol)) return symbol;
+  if (LEGACY_OBJECT_SYMBOLS.has(symbol)) return 'column';
+  return null;
+}
+
+function normalizeObjectRecord(object) {
+  if (!object || !Number.isFinite(Number(object.x)) || !Number.isFinite(Number(object.y))) return null;
+  const symbol = normalizeObjectSymbol(object.symbol) || 'column';
+  const def = OBJECT_DEFS[symbol];
+  const width = Number(object.width), height = Number(object.height);
+  return {
+    symbol,
+    x: Number(object.x), y: Number(object.y),
+    width: Number.isFinite(width) && width > 0 ? width : feetToPixels(def.widthFt),
+    height: Number.isFinite(height) && height > 0 ? height : feetToPixels(def.heightFt),
+    layerId: layerAssignmentId(object.layerId),
+  };
+}
+
 function createObject(symbol, center) {
-  const def = OBJECT_DEFS[symbol] || OBJECT_DEFS.car;
-  return { symbol, x: center.x, y: center.y, width: feetToPixels(def.widthFt), height: feetToPixels(def.heightFt) };
+  const normalized = normalizeObjectSymbol(symbol) || 'column';
+  const def = OBJECT_DEFS[normalized];
+  return { symbol: normalized, x: center.x, y: center.y, width: feetToPixels(def.widthFt), height: feetToPixels(def.heightFt), layerId: null };
 }
 
 function objectBounds(object) {
@@ -398,14 +420,9 @@ function tintedObjectImage(symbol, color) {
 function drawObject(object, selected = false) {
   const style = floorItemLayerStyle(object, DEFAULT_SHAPE_COLOR, 1);
   if (!style.visible) return;
-  const bounds = objectBounds(object), image = layerAssignmentId(object.layerId) ? tintedObjectImage(object.symbol, style.color) : objectImages[object.symbol], def = OBJECT_DEFS[object.symbol] || OBJECT_DEFS.car;
+  const bounds = objectBounds(object);
   ctx.save(); ctx.translate(state.offset.x, state.offset.y); ctx.scale(state.zoom, state.zoom); ctx.globalAlpha = style.opacity;
-  if (image && ((image.complete && image.naturalWidth) || image instanceof HTMLCanvasElement)) ctx.drawImage(image, bounds.x1, bounds.y1, object.width, object.height);
-  else {
-    ctx.fillStyle = 'rgba(247,244,236,.8)'; ctx.strokeStyle = style.color; ctx.lineWidth = 2 / state.zoom;
-    ctx.fillRect(bounds.x1, bounds.y1, object.width, object.height); ctx.strokeRect(bounds.x1, bounds.y1, object.width, object.height);
-    ctx.fillStyle = '#292b26'; ctx.font = `${12 / state.zoom}px "DM Sans", sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(def.label, object.x, object.y);
-  }
+  ctx.fillStyle = style.color; ctx.fillRect(bounds.x1, bounds.y1, object.width, object.height);
   if (selected) { ctx.globalAlpha = 1; ctx.strokeStyle = '#b54b2d'; ctx.lineWidth = 1.5 / state.zoom; ctx.setLineDash([6 / state.zoom, 4 / state.zoom]); ctx.strokeRect(bounds.x1, bounds.y1, object.width, object.height); }
   ctx.restore();
   if (selected) drawScreenHandle({ x: bounds.x2, y: bounds.y2 });
@@ -430,7 +447,7 @@ function draw() {
   ctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0); ctx.clearRect(0, 0, width, height);
   ctx.fillStyle = '#e7e3d8'; ctx.fillRect(0, 0, width, height); drawGrid(width, height);
   state.shapes.forEach((shape, index) => drawShape(shape, false, (state.tool === 'shapes' && index === state.selectedShape) || floorSelectionIncludes('shapes', index)));
-  state.objects.forEach((object, index) => drawObject(object, (state.tool === 'objects' && index === state.selectedObject) || floorSelectionIncludes('objects', index)));
+  state.objects.forEach((object, index) => drawObject(object, ((state.tool === 'objects' || state.tool === 'edit') && index === state.selectedObject) || floorSelectionIncludes('objects', index)));
   state.walls.forEach((wall, index) => drawWall(wall, false, (state.tool === 'edit' && index === state.selectedWall) || floorSelectionIncludes('walls', index)));
   if (state.showText) state.labels.forEach((label, index) => drawLabel(label, (state.tool === 'text' && index === state.selectedLabel) || floorSelectionIncludes('labels', index)));
   if (state.showDimensions) state.rulers.forEach((ruler, index) => drawRuler(ruler, false, (state.tool === 'ruler' && index === state.selectedRuler) || floorSelectionIncludes('rulers', index)));
@@ -452,7 +469,7 @@ function projectData() {
     labels: state.labels.map((label) => ({ text: label.text, x: label.x, y: label.y, fontSize: label.fontSize || 16, layerId: layerAssignmentId(label.layerId) })),
     rulers: state.rulers.map((ruler) => ({ a: { ...ruler.a }, b: { ...ruler.b }, ...(ruler.labelOffset ? { labelOffset: { ...ruler.labelOffset } } : {}), layerId: layerAssignmentId(ruler.layerId) })),
     shapes: state.shapes.map((shape) => ({ ...structuredClone(shape), layerId: layerAssignmentId(shape.layerId) })),
-    objects: state.objects.map((object) => ({ symbol: object.symbol, x: object.x, y: object.y, width: object.width, height: object.height, layerId: layerAssignmentId(object.layerId) })),
+    objects: state.objects.map((object) => ({ symbol: normalizeObjectSymbol(object.symbol) || 'column', x: object.x, y: object.y, width: object.width, height: object.height, layerId: layerAssignmentId(object.layerId) })),
     elevations: elevationReady && typeof elevationProjectData === 'function' ? elevationProjectData() : (saved.elevations || null),
     server: state.serverId ? { id: state.serverId, name: state.serverName } : null,
   };
@@ -586,8 +603,8 @@ function selectedSizeInfo() {
   }
   const object = state.selectedObject !== null ? state.objects[state.selectedObject] : null;
   if (object) return {
-    lengthLabel: 'Selected object width (ft)', length: feetValueFromInches(pixelsToInches(object.width)),
-    heightLabel: 'Selected object height (ft)', height: feetValueFromInches(pixelsToInches(object.height)),
+    lengthLabel: 'Selected length (ft)', length: feetValueFromInches(pixelsToInches(object.width)),
+    heightLabel: 'Selected height (ft)', height: feetValueFromInches(pixelsToInches(object.height)),
   };
   const shape = state.selectedShape !== null ? state.shapes[state.selectedShape] : null;
   if (!shape) return null;
@@ -790,10 +807,10 @@ function renderWallList() {
 
   const objectList = $('#objectList'); objectList.replaceChildren();
   if (!state.objects.length) {
-    const empty = document.createElement('li'); empty.className = 'empty-list'; empty.textContent = 'Add a car or person to see it here.'; objectList.append(empty);
+    const empty = document.createElement('li'); empty.className = 'empty-list'; empty.textContent = 'Add a column to see it here.'; objectList.append(empty);
   } else state.objects.forEach((object, index) => {
     const item = document.createElement('li'), name = document.createElement('span'), size = document.createElement('strong');
-    name.textContent = `${OBJECT_DEFS[object.symbol]?.label || object.symbol} ${index + 1}`; size.textContent = objectSizeText(object); item.append(name, size); objectList.append(item);
+    name.textContent = `${OBJECT_DEFS[normalizeObjectSymbol(object.symbol) || 'column']?.label || 'Column'} ${index + 1}`; size.textContent = objectSizeText(object); item.append(name, size); objectList.append(item);
     item.addEventListener('click', () => { setTool('objects'); state.selectedObject = index; state.selectedShape = null; state.selectedWall = null; updateUi(); draw(); });
   });
   $('#objectCount').textContent = String(state.objects.length);
@@ -909,6 +926,15 @@ canvas.addEventListener('pointerdown', (event) => {
   }
   if (state.tool === 'edit') {
     const rawPoint = rawCanvasPoint(event);
+    let objectIndex = state.selectedObject, objectPart = objectIndex !== null && state.objects[objectIndex] && floorItemVisible(state.objects[objectIndex]) ? objectPartAtEvent(event, state.objects[objectIndex]) : null;
+    if (!objectPart) { objectIndex = objectAtPoint(rawPoint); objectPart = objectIndex >= 0 ? objectPartAtEvent(event, state.objects[objectIndex]) : null; }
+    if (objectPart && objectIndex >= 0) {
+      state.selectedObject = objectIndex; state.selectedWall = null; state.selectedShape = null;
+      state.objectDragMode = objectPart; state.objectDragSnapshot = documentSnapshot();
+      state.objectDragStart = canvasPoint(event); state.objectDragOriginal = structuredClone(state.objects[objectIndex]);
+      canvas.setPointerCapture(event.pointerId); setCanvasCursor(); updateUi(); draw(); return;
+    }
+    state.selectedObject = null;
     let index = state.selectedWall;
     let handle = null;
     if (index !== null && state.walls[index] && floorItemVisible(state.walls[index])) {
@@ -1085,7 +1111,7 @@ function setTool(tool) {
   state.objectDragMode = null; state.objectDragSnapshot = null; state.objectDragStart = null; state.objectDragOriginal = null;
   if (tool !== 'edit') { state.selectedWall = null; clearFloorMultiSelection(); state.selectMode = 'single'; }
   if (tool !== 'shapes') state.selectedShape = null;
-  if (tool !== 'objects') state.selectedObject = null;
+  if (tool !== 'objects' && tool !== 'edit') state.selectedObject = null;
   if (tool !== 'text') state.selectedLabel = null;
   if (tool !== 'ruler') state.selectedRuler = null;
   state.tool = tool;
@@ -1095,10 +1121,10 @@ function setTool(tool) {
   document.querySelectorAll('[data-tool]').forEach((button) => button.classList.toggle('active', button.dataset.tool === tool));
   const content = {
     wall: ['Wall tool', 'Drag between grid points Ãƒâ€šÃ‚Â· Hold Shift for a straight wall'],
-    edit: [state.selectMode === 'highlight' ? 'Highlight Select' : 'Select tool', state.selectMode === 'highlight' ? 'Drag a box around complete items; drag a highlighted item to move the group' : 'Select one wall, then drag either endpoint'],
+    edit: [state.selectMode === 'highlight' ? 'Highlight Select' : 'Select tool', state.selectMode === 'highlight' ? 'Drag a box around complete items; drag a highlighted item to move the group' : 'Select a wall or column; drag endpoints, handles, or the column body'],
     ruler: ['Ruler tool', 'Drag to measure; select and drag a line, endpoint, or label'],
     shapes: ['Shapes tool', 'Choose a shape, then drag on the canvas; selected shapes can be moved or resized'],
-    objects: ['Objects tool', 'Choose a car or person; click to insert, then drag to move or resize'],
+    objects: ['Column tool', 'Click to insert a 1 ft × 1 ft column; drag to move or resize'],
     text: ['Text tool', 'Click to add Ãƒâ€šÃ‚Â· Drag to move Ãƒâ€šÃ‚Â· Double-click to edit'],
     erase: ['Erase tool', 'Click a wall to remove it'], pan: ['Pan tool', 'Drag to move the grid and plan'],
   }[tool];
@@ -1134,7 +1160,7 @@ function applyProject(project, options = {}) {
     return ['square', 'rectangle', 'line'].includes(shape.type) ? validPoint(shape.a) && validPoint(shape.b) : validPoint(shape.center) && Number.isFinite(Number(shape.radius));
   }))) throw new Error('This plan contains invalid shapes.');
   if (project.objects !== undefined && (!Array.isArray(project.objects) || !project.objects.every((object) =>
-    object && Object.prototype.hasOwnProperty.call(OBJECT_DEFS, object.symbol) && validPoint(object) && Number(object.width) > 0 && Number(object.height) > 0))) throw new Error('This plan contains invalid objects.');
+    object && normalizeObjectSymbol(object.symbol) && validPoint(object) && Number(object.width) > 0 && Number(object.height) > 0))) throw new Error('This plan contains invalid objects.');
   if (project.layers !== undefined && (!Array.isArray(project.layers) || !project.layers.every((layer) => layer && (layer.id === undefined || typeof layer.id === 'string'))))
     throw new Error('This plan contains invalid layers.');
   state.layers = normalizeLayers(project.layers || []);
@@ -1158,7 +1184,7 @@ function applyProject(project, options = {}) {
     if (shape.type === 'square' || shape.type === 'rectangle' || shape.type === 'line') return { type: shape.type, a: { x: Number(shape.a.x), y: Number(shape.a.y) }, b: { x: Number(shape.b.x), y: Number(shape.b.y) }, ...style };
     return { type: shape.type, center: { x: Number(shape.center.x), y: Number(shape.center.y) }, radius: Math.max(0, Number(shape.radius)), ...style };
   });
-  state.objects = (project.objects || []).map((object) => ({ symbol: object.symbol, x: Number(object.x), y: Number(object.y), width: Math.max(1, Number(object.width)), height: Math.max(1, Number(object.height)), layerId: layerAssignmentId(object.layerId) }));
+  state.objects = (project.objects || []).map(normalizeObjectRecord).filter(Boolean);
   if (typeof loadElevationProject === 'function') loadElevationProject(project.elevations);
   if ([1, 3, 6, 12, 24].includes(Number(project.settings?.gridInches))) state.gridInches = Number(project.settings.gridInches);
   if (Number(project.settings?.wallWidth) >= 3 && Number(project.settings?.wallWidth) <= 12) state.wallWidth = Number(project.settings.wallWidth);

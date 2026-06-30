@@ -155,27 +155,11 @@
               <output id="labelSizeValue">—</output>
             </div>
           </label>
-          <div class="legend-card">
-            <span class="legend-swatch"></span>
-            <div><strong id="wallCount">0 walls</strong><small>Every point snaps to the grid</small></div>
+          <div hidden aria-hidden="true"><span id="wallCount"></span></div>
+          <div hidden aria-hidden="true">
+            <span id="totalLength"></span><span id="rulerCount"></span><span id="labelCount"></span><span id="shapeCount"></span><span id="objectCount"></span>
+            <ol id="wallList"></ol><ul id="rulerList"></ul><ul id="labelList"></ul><ul id="shapeList"></ul><ul id="objectList"></ul>
           </div>
-          <section class="wall-list-panel">
-            <div class="wall-list-heading">
-              <span class="eyebrow">Plan elements</span>
-            </div>
-            <div class="element-lists">
-              <div class="element-section-heading"><span>Lines</span><span id="totalLength">0 ft</span></div>
-              <ol id="wallList" class="wall-list"><li class="empty-list">Draw a wall to see its length.</li></ol>
-              <div class="element-section-heading"><span>Rulers</span><span id="rulerCount">0</span></div>
-              <ul id="rulerList" class="wall-list"><li class="empty-list">Measure between two points.</li></ul>
-              <div class="element-section-heading"><span>Text labels</span><span id="labelCount">0</span></div>
-              <ul id="labelList" class="wall-list label-list"><li class="empty-list">Add text to see it here.</li></ul>
-              <div class="element-section-heading"><span>Shapes</span><span id="shapeCount">0</span></div>
-              <ul id="shapeList" class="wall-list"><li class="empty-list">Add a shape to see it here.</li></ul>
-              <div class="element-section-heading"><span>Objects</span><span id="objectCount">0</span></div>
-              <ul id="objectList" class="wall-list"><li class="empty-list">Add a car or person to see it here.</li></ul>
-            </div>
-          </section>
         </aside>
       </main>
       <main id="elevationWorkspace" class="workspace elevation-workspace" hidden>
@@ -273,14 +257,8 @@
             <span id="elevLengthLabel">Selected line length (ft)</span>
             <input id="elevLength" class="number-input" type="number" min="0.1" step="0.1" disabled />
           </label>
-          <div class="legend-card">
-            <span class="legend-swatch"></span>
-            <div><strong id="elevItemCount">0 items</strong><small>Draft front, side, rear, and roof outlines</small></div>
-          </div>
-          <section class="wall-list-panel">
-            <div class="wall-list-heading"><span class="eyebrow">Elevation elements</span></div>
-            <ul id="elevationList" class="wall-list"><li class="empty-list">Draw elevation lines, dimensions, rectangles, or labels.</li></ul>
-          </section>
+          <div hidden aria-hidden="true"><span id="elevItemCount"></span></div>
+          <div hidden aria-hidden="true"><ul id="elevationList"></ul></div>
         </aside>
       </main>
     </div>

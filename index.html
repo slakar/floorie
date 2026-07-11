@@ -41,44 +41,44 @@
             <span class="tool-icon wall-icon"></span><span>Wall</span>
           </button>
           <button class="tool" data-tool="edit" title="Select or edit wall endpoints (V)">
-            <span class="tool-icon edit-icon">â†”</span><span>Edit</span>
+            <span class="tool-icon edit-icon">&harr;</span><span>Edit</span>
           </button>
           <button class="tool" data-tool="ruler" title="Measure between any two points (R)">
-            <span class="tool-icon ruler-icon">|-|</span><span>Ruler</span>
+            <span class="tool-icon ruler-icon">&#8866;&#9472;&#8867;</span><span>Ruler</span>
           </button>
           <button class="tool" data-tool="shapes" title="Insert shapes (S)">
-            <span class="tool-icon shapes-icon">â–¡</span><span>Shapes</span>
+            <span class="tool-icon shapes-icon">&#9633;</span><span>Shapes</span>
           </button>
           <button class="tool" data-tool="objects" title="Insert columns (O)">
-            <span class="tool-icon object-icon">â– </span><span>Column</span>
+            <span class="tool-icon object-icon">&#9632;</span><span>Column</span>
           </button>
           <button class="tool" data-tool="text" title="Add and move text labels (T)">
             <span class="tool-icon text-icon">T</span><span>Text</span>
           </button>
           <button class="tool" data-tool="erase" title="Erase walls (E)">
-            <span class="tool-icon erase-icon">Del</span><span>Erase</span>
+            <span class="tool-icon erase-icon">&#9003;</span><span>Erase</span>
           </button>
           <button class="tool" data-tool="pan" title="Move the grid (P)">
-            <span class="tool-icon pan-icon">+</span><span>Pan</span>
+            <span class="tool-icon pan-icon">&#10010;</span><span>Pan</span>
           </button>
           <div class="tool-divider"></div>
-          <button id="undoButton" class="tool compact" title="Undo (Ctrl+Z)"><span class="tool-icon">Undo</span><span>Undo</span></button>
-          <button id="redoButton" class="tool compact" title="Redo (Ctrl+Shift+Z)"><span class="tool-icon">Redo</span><span>Redo</span></button>
-          <button id="centerButton" class="tool compact" title="Center the grid"><span class="tool-icon">O</span><span>Center</span></button>
+          <button id="undoButton" class="tool compact" title="Undo (Ctrl+Z)"><span class="tool-icon undo-icon">&#8630;</span><span>Undo</span></button>
+          <button id="redoButton" class="tool compact" title="Redo (Ctrl+Shift+Z)"><span class="tool-icon redo-icon">&#8631;</span><span>Redo</span></button>
+          <button id="centerButton" class="tool compact" title="Center the grid"><span class="tool-icon center-icon">&#8857;</span><span>Center</span></button>
         </aside>
         <aside id="shapePalette" class="shape-palette" aria-label="Shape choices" hidden>
-          <button class="shape-choice active" data-shape="square" title="Square"><span>â–¡</span><small>Square</small></button>
-          <button class="shape-choice" data-shape="rectangle" title="Rectangle"><span>â–­</span><small>Rect</small></button>
-          <button class="shape-choice" data-shape="circle" title="Circle"><span>â—‹</span><small>Circle</small></button>
+          <button class="shape-choice active" data-shape="square" title="Square"><span>&#9633;</span><small>Square</small></button>
+          <button class="shape-choice" data-shape="rectangle" title="Rectangle"><span>&#9645;</span><small>Rect</small></button>
+          <button class="shape-choice" data-shape="circle" title="Circle"><span>&#9675;</span><small>Circle</small></button>
           <button class="shape-choice" data-shape="line" title="Line"><span>/</span><small>Line</small></button>
-          <button class="shape-choice" data-shape="semicircle" title="Semi-circle"><span>âˆ©</span><small>Half</small></button>
+          <button class="shape-choice" data-shape="semicircle" title="Semi-circle"><span>&#8745;</span><small>Half</small></button>
         </aside>
         <aside id="objectPalette" class="shape-palette object-palette" aria-label="Object choices" hidden>
-          <button class="shape-choice active" data-object="column" title="Column"><span>â– </span><small>Column</small></button>
+          <button class="shape-choice active" data-object="column" title="Column"><span>&#9632;</span><small>Column</small></button>
         </aside>
         <aside id="selectPalette" class="shape-palette select-palette" aria-label="Selection choices" hidden>
-          <button class="shape-choice active" data-select-mode="single" title="Select one item"><span>+</span><small>Select</small></button>
-          <button class="shape-choice" data-select-mode="highlight" title="Box select multiple items"><span>â–¡</span><small>Highlight</small></button>
+          <button class="shape-choice active" data-select-mode="single" title="Select one item"><span>&#9679;</span><small>Select</small></button>
+          <button class="shape-choice" data-select-mode="highlight" title="Box select multiple items"><span>&#9633;</span><small>Highlight</small></button>
         </aside>
 
         <section class="canvas-shell">
@@ -169,7 +169,15 @@
               <button id="addLayerButton" class="text-button" type="button">+ Add</button>
             </div>
             <div id="layerList" class="layer-list"></div>
-          </section>          <div hidden aria-hidden="true"><span id="wallCount"></span></div>
+          </section>
+          <section class="views-panel" aria-label="Saved floor plan views">
+            <div class="layers-heading">
+              <span class="eyebrow">Views</span>
+              <button id="addViewButton" class="text-button" type="button">+ Add view</button>
+            </div>
+            <div id="viewList" class="layer-list view-list"></div>
+          </section>
+          <div hidden aria-hidden="true"><span id="wallCount"></span></div>
           <div hidden aria-hidden="true">
             <span id="totalLength"></span><span id="rulerCount"></span><span id="labelCount"></span><span id="shapeCount"></span><span id="objectCount"></span>
             <ol id="wallList"></ol><ul id="rulerList"></ul><ul id="labelList"></ul><ul id="shapeList"></ul><ul id="objectList"></ul>
@@ -194,10 +202,10 @@
             <span class="tool-icon">+</span><span>Select</span>
           </button>
           <button class="tool" data-elev-tool="erase" title="Erase elevation items">
-            <span class="tool-icon erase-icon">Del</span><span>Erase</span>
+            <span class="tool-icon erase-icon">&#9003;</span><span>Erase</span>
           </button>
           <button class="tool" data-elev-tool="pan" title="Pan elevation canvas">
-            <span class="tool-icon pan-icon">+</span><span>Pan</span>
+            <span class="tool-icon pan-icon">&#10010;</span><span>Pan</span>
           </button>
           <div class="tool-divider"></div>
           <button id="elevUndoButton" class="tool compact" title="Undo elevation change" disabled>

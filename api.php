@@ -11,6 +11,7 @@ const MAX_LABELS = 2000;
 const MAX_RULERS = 5000;
 const MAX_SHAPES = 5000;
 const MAX_OBJECTS = 2000;
+const MAX_VIEWS = 500;
 const MAX_ELEVATION_ITEMS = 5000;
 
 function respond(int $status, array $payload): void
@@ -95,11 +96,24 @@ function validate_plan($plan): void
     if (!is_array($objects) || count($objects) > MAX_OBJECTS) respond(422, ['error' => 'The plan contains invalid objects.']);
     foreach ($objects as $object) {
         $symbol = is_array($object) ? ($object['symbol'] ?? '') : '';
-        if (!is_array($object) || !in_array($symbol, ['car', 'person'], true) || !valid_point($object)
+        if (!is_array($object) || !in_array($symbol, ['column', 'car', 'person'], true) || !valid_point($object)
             || !isset($object['width'], $object['height'])
             || !finite_number($object['width']) || !finite_number($object['height'])
             || $object['width'] <= 0 || $object['height'] <= 0) {
             respond(422, ['error' => 'The plan contains an invalid object.']);
+        }
+    }
+    $savedViews = $plan['views'] ?? [];
+    if (!is_array($savedViews) || count($savedViews) > MAX_VIEWS) respond(422, ['error' => 'The plan contains invalid views.']);
+    foreach ($savedViews as $savedView) {
+        if (!is_array($savedView)
+            || (isset($savedView['id']) && (!is_string($savedView['id']) || strlen($savedView['id']) > 80))
+            || (isset($savedView['name']) && (!is_string($savedView['name']) || strlen($savedView['name']) > 120))
+            || !isset($savedView['x'], $savedView['y'], $savedView['width'], $savedView['height'])
+            || !finite_number($savedView['x']) || !finite_number($savedView['y'])
+            || !finite_number($savedView['width']) || !finite_number($savedView['height'])
+            || $savedView['width'] <= 0 || $savedView['height'] <= 0) {
+            respond(422, ['error' => 'The plan contains an invalid view.']);
         }
     }
     $elevations = $plan['elevations'] ?? null;

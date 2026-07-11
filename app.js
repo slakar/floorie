@@ -6,6 +6,8 @@ const gridPixels = (inches) => ({ 1: 12, 3: 20, 6: 25, 12: 32, 24: 44 })[inches]
 const DEFAULT_WALL_COLOR = '#30332d';
 const DEFAULT_SHAPE_COLOR = '#59615b';
 const DEFAULT_LAYER_COLOR = '#30332d';
+const VIEW_LAYER_ID = 'views';
+const DEFAULT_VIEW_LAYER_COLOR = '#2f75b5';
 const COLOR_PATTERN = /^#[0-9a-f]{6}$/i;
 var elevationReady = false;
 const OBJECT_DEFS = {
@@ -26,8 +28,9 @@ function readLocalProject() {
 
 const saved = readLocalProject();
 const state = {
-  walls: saved.walls || [], labels: saved.labels || [], rulers: saved.rulers || [], shapes: saved.shapes || [], objects: saved.objects || [], layers: saved.layers || [], history: [], future: [], tool: 'wall',
+  walls: saved.walls || [], labels: saved.labels || [], rulers: saved.rulers || [], shapes: saved.shapes || [], objects: saved.objects || [], layers: saved.layers || [], views: saved.views || [], history: [], future: [], tool: 'wall',
   drawing: false, panning: false, start: null, preview: null, panPointer: null, spacePressed: false,
+  drawingView: false, viewStart: null, viewPreview: null, viewSnapshot: null,
   selectedWall: null, editingHandle: null, editSnapshot: null,
   selectedLabel: null, draggingLabel: false, labelSnapshot: null, labelDragOffset: null, labelSizeSnapshot: null,
   drawingRuler: false, rulerStart: null, rulerPreview: null,
@@ -55,7 +58,7 @@ const objectImages = Object.fromEntries(Object.entries(OBJECT_DEFS).filter(([, d
   const image = new Image(); image.onload = () => { objectTintCache.clear(); draw(); }; image.src = def.src; return [key, image];
 }));
 
-const documentSnapshot = () => structuredClone({ walls: state.walls, labels: state.labels, rulers: state.rulers, shapes: state.shapes, objects: state.objects, layers: state.layers });
+const documentSnapshot = () => structuredClone({ walls: state.walls, labels: state.labels, rulers: state.rulers, shapes: state.shapes, objects: state.objects, layers: state.layers, views: state.views });
 function restoreSnapshot(snapshot) {
   state.walls = structuredClone(snapshot.walls || []);
   state.labels = structuredClone(snapshot.labels || []);
@@ -63,6 +66,8 @@ function restoreSnapshot(snapshot) {
   state.shapes = structuredClone(snapshot.shapes || []);
   state.objects = structuredClone(snapshot.objects || []);
   state.layers = normalizeLayers(snapshot.layers || []);
+  state.views = normalizeViews(snapshot.views || []);
+  ensureViewsLayer();
   normalizeFloorLayerAssignments();
 }
 function pushHistory(snapshot = documentSnapshot()) {
@@ -114,12 +119,43 @@ function floorItemLayerStyle(item, fallbackColor, fallbackOpacity = 1) {
   if (itemHasMissingLayer(item)) return { visible: true, color: '#000000', opacity: 1 };
   return { visible: true, color: normalizeColor(item?.color, fallbackColor), opacity: fallbackOpacity };
 }
+function ensureViewsLayer() {
+  const existing = state.layers.find((layer) => layer.id === VIEW_LAYER_ID);
+  if (existing) {
+    existing.name = 'Views';
+    existing.color = normalizeColor(existing.color, DEFAULT_VIEW_LAYER_COLOR);
+    existing.opacity = normalizeLayerOpacity(existing.opacity);
+    existing.visible = existing.visible !== false;
+  } else {
+    state.layers.unshift({ id: VIEW_LAYER_ID, name: 'Views', color: DEFAULT_VIEW_LAYER_COLOR, opacity: 1, visible: true });
+  }
+}
+
+function createViewId() { return `view-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`; }
+function normalizeRect(a, b) {
+  const x1 = Math.min(a.x, b.x), y1 = Math.min(a.y, b.y), x2 = Math.max(a.x, b.x), y2 = Math.max(a.y, b.y);
+  return { x: x1, y: y1, width: x2 - x1, height: y2 - y1 };
+}
+function normalizeViews(views) {
+  if (!Array.isArray(views)) return [];
+  return views.map((view, index) => {
+    const id = typeof view?.id === 'string' && view.id.trim() ? view.id.trim().slice(0, 80) : createViewId();
+    const name = typeof view?.name === 'string' && view.name.trim() ? view.name.trim().slice(0, 100) : `View ${index + 1}`;
+    const x = Number(view?.x), y = Number(view?.y), width = Number(view?.width), height = Number(view?.height);
+    if (![x, y, width, height].every(Number.isFinite) || width <= 0 || height <= 0) return null;
+    return { id, name, x, y, width, height };
+  }).filter(Boolean);
+}
+function viewsLayer() { ensureViewsLayer(); return state.layers.find((layer) => layer.id === VIEW_LAYER_ID); }
+function viewBounds(view) { return { x1: view.x, y1: view.y, x2: view.x + view.width, y2: view.y + view.height }; }
 function normalizeFloorLayerAssignments() {
   ['walls', 'labels', 'rulers', 'shapes', 'objects'].forEach((kind) => {
     state[kind] = (state[kind] || []).map((item) => ({ ...item, layerId: layerAssignmentId(item?.layerId) }));
   });
 }
 state.layers = normalizeLayers(state.layers);
+state.views = normalizeViews(state.views);
+ensureViewsLayer();
 normalizeFloorLayerAssignments();
 const pixelsToInches = (pixels) => pixels / state.grid * state.gridInches;
 const feetToPixels = (feet) => feet * 12 / state.gridInches * state.grid;
@@ -444,6 +480,50 @@ function updateObjectDrag(event) {
   object.width = width; object.height = height;
 }
 
+function viewLayerStyle() {
+  const layer = viewsLayer();
+  return { visible: layer.visible !== false, color: layer.color, opacity: normalizeLayerOpacity(layer.opacity) };
+}
+
+function drawViewBox(view, preview = false) {
+  const style = preview ? { visible: true, color: '#b54b2d', opacity: 1 } : viewLayerStyle();
+  if (!style.visible) return;
+  const a = screenFromWorld({ x: view.x, y: view.y });
+  const b = screenFromWorld({ x: view.x + view.width, y: view.y + view.height });
+  const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y), width = Math.abs(b.x - a.x), height = Math.abs(b.y - a.y);
+  ctx.save(); ctx.globalAlpha = style.opacity; ctx.strokeStyle = style.color; ctx.lineWidth = 1.5; ctx.setLineDash([8, 5]);
+  ctx.strokeRect(x, y, width, height);
+  ctx.setLineDash([]); ctx.fillStyle = style.color; ctx.font = '600 11px "DM Sans", sans-serif'; ctx.textBaseline = 'bottom';
+  ctx.fillText(view.name || 'View', x + 4, y - 4);
+  ctx.restore();
+}
+
+function drawViews() {
+  state.views.forEach((view) => drawViewBox(view));
+  if (state.viewPreview) drawViewBox({ ...state.viewPreview, name: 'New view' }, true);
+}
+
+function renderViewList() {
+  const list = $('#viewList'); if (!list) return;
+  list.replaceChildren();
+  if (!state.views.length) { const empty = document.createElement('p'); empty.className = 'view-empty'; empty.textContent = 'No saved views yet. Click Add view, then drag a rectangle on the canvas.'; list.append(empty); return; }
+  state.views.forEach((view) => {
+    const row = document.createElement('div'); row.className = 'view-row';
+    const meta = document.createElement('div');
+    const name = document.createElement('strong'); name.textContent = view.name;
+    const size = document.createElement('small'); size.textContent = `${formatLength(pixelsToInches(view.width))} x ${formatLength(pixelsToInches(view.height))}`;
+    const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'text-button'; remove.textContent = 'Delete';
+    meta.append(name, size); row.append(meta, remove); list.append(row);
+    remove.addEventListener('click', () => deleteView(view.id));
+  });
+}
+
+function deleteView(id) {
+  const view = state.views.find((item) => item.id === id); if (!view) return;
+  if (!confirm(`Delete view "${view.name}"?`)) return;
+  const snapshot = documentSnapshot(); state.views = state.views.filter((item) => item.id !== id);
+  pushHistory(snapshot); markDirty(); persist(); updateUi(); draw();
+}
 function draw() {
   const width = canvas.width / state.dpr, height = canvas.height / state.dpr;
   ctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0); ctx.clearRect(0, 0, width, height);
@@ -459,6 +539,7 @@ function draw() {
   if (state.tool === 'shapes' && state.selectedShape !== null && state.shapes[state.selectedShape] && floorItemVisible(state.shapes[state.selectedShape])) drawShapeHandles(state.shapes[state.selectedShape]);
   if (state.tool === 'edit' && state.selectMode === 'single' && state.selectedWall !== null && state.walls[state.selectedWall] && floorItemVisible(state.walls[state.selectedWall])) drawEditHandles(state.walls[state.selectedWall]);
   drawFloorSelectionBox();
+  drawViews();
 }
 
 function projectData() {
@@ -472,6 +553,7 @@ function projectData() {
     rulers: state.rulers.map((ruler) => ({ a: { ...ruler.a }, b: { ...ruler.b }, ...(ruler.labelOffset ? { labelOffset: { ...ruler.labelOffset } } : {}), layerId: layerAssignmentId(ruler.layerId) })),
     shapes: state.shapes.map((shape) => ({ ...structuredClone(shape), layerId: layerAssignmentId(shape.layerId) })),
     objects: state.objects.map((object) => ({ symbol: normalizeObjectSymbol(object.symbol) || 'column', x: object.x, y: object.y, width: object.width, height: object.height, layerId: layerAssignmentId(object.layerId) })),
+    views: state.views.map((view) => ({ id: view.id, name: view.name, x: view.x, y: view.y, width: view.width, height: view.height })),
     elevations: elevationReady && typeof elevationProjectData === 'function' ? elevationProjectData() : (saved.elevations || null),
     server: state.serverId ? { id: state.serverId, name: state.serverName } : null,
   };
@@ -673,7 +755,7 @@ function renderLayerControls() {
       const missing = document.createElement('option'); missing.value = current.value; missing.textContent = 'Missing layer (black)'; missing.disabled = true; select.append(missing);
     }
     const unassigned = document.createElement('option'); unassigned.value = ''; unassigned.textContent = 'Not assigned'; select.append(unassigned);
-    state.layers.forEach((layer) => { const option = document.createElement('option'); option.value = layer.id; option.textContent = layer.name; select.append(option); });
+    state.layers.filter((layer) => layer.id !== VIEW_LAYER_ID).forEach((layer) => { const option = document.createElement('option'); option.value = layer.id; option.textContent = layer.name; select.append(option); });
     select.disabled = false; select.value = current.value;
   }
 
@@ -688,11 +770,12 @@ function renderLayerControls() {
     const meta = document.createElement('div'); meta.className = 'layer-meta';
     const name = document.createElement('strong'); name.textContent = layer.name;
     const details = document.createElement('small'); details.textContent = `${Math.round(normalizeLayerOpacity(layer.opacity) * 100)}% opacity`;
-    const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'text-button layer-delete'; remove.textContent = 'Delete'; remove.title = 'Delete layer'; remove.setAttribute('aria-label', `Delete ${layer.name}`);
+    const remove = layer.id === VIEW_LAYER_ID ? null : document.createElement('button');
+    if (remove) { remove.type = 'button'; remove.className = 'text-button layer-delete'; remove.textContent = 'Delete'; remove.title = 'Delete layer'; remove.setAttribute('aria-label', `Delete ${layer.name}`); }
     const edit = document.createElement('button'); edit.type = 'button'; edit.className = 'text-button'; edit.textContent = 'Edit';
-    meta.append(name, details); row.append(visible, swatch, meta, remove, edit); list.append(row);
+    meta.append(name, details); row.append(visible, swatch, meta, ...(remove ? [remove] : []), edit); list.append(row);
     visible.addEventListener('change', () => setLayerVisibility(layer.id, visible.checked));
-    remove.addEventListener('click', () => openDeleteLayerDialog(layer.id));
+    if (remove) remove.addEventListener('click', () => openDeleteLayerDialog(layer.id));
     edit.addEventListener('click', () => openLayerDialog(layer.id));
   });
 }
@@ -722,7 +805,7 @@ function countLayerAssignments(id) {
 }
 
 function openDeleteLayerDialog(id) {
-  const layer = state.layers.find((item) => item.id === id); if (!layer) return;
+  const layer = state.layers.find((item) => item.id === id); if (!layer || id === VIEW_LAYER_ID) return;
   state.deletingLayerId = id;
   const count = countLayerAssignments(id);
   $('#deleteLayerMessage').textContent = `Delete "${layer.name}"? ${count} assigned item${count === 1 ? '' : 's'} will remain on the canvas and render black at 100% opacity until reassigned.`;
@@ -733,7 +816,7 @@ function closeDeleteLayerDialog() { state.deletingLayerId = null; $('#deleteLaye
 
 function confirmDeleteLayer() {
   const id = state.deletingLayerId;
-  if (!id || !state.layers.some((layer) => layer.id === id)) { closeDeleteLayerDialog(); return; }
+  if (!id || id === VIEW_LAYER_ID || !state.layers.some((layer) => layer.id === id)) { closeDeleteLayerDialog(); return; }
   const snapshot = documentSnapshot();
   state.layers = state.layers.filter((layer) => layer.id !== id);
   if (state.editingLayerId === id && $('#layerDialog').open) closeLayerDialog();
@@ -851,11 +934,12 @@ function updateUi() {
   if (selectedLabel) { $('#labelSize').value = String(selectedLabel.fontSize || 16); $('#labelSizeValue').textContent = `${selectedLabel.fontSize || 16}px`; }
   else { $('#labelSizeValue').textContent = '0'; }
   renderLayerControls();
+  renderViewList();
   renderWallList();
 }
 
 function setCanvasCursor() {
-  canvas.style.cursor = state.panning || state.editingHandle || state.draggingLabel || state.rulerDragMode || state.shapeDragMode || state.objectDragMode ? 'grabbing' : state.spacePressed || state.tool === 'pan' ? 'grab' : ['wall', 'ruler', 'shapes', 'objects'].includes(state.tool) ? 'crosshair' : state.tool === 'edit' || state.tool === 'text' ? 'pointer' : 'cell';
+  canvas.style.cursor = state.panning || state.editingHandle || state.draggingLabel || state.rulerDragMode || state.shapeDragMode || state.objectDragMode ? 'grabbing' : state.spacePressed || state.tool === 'pan' ? 'grab' : ['wall', 'ruler', 'shapes', 'objects', 'view'].includes(state.tool) ? 'crosshair' : state.tool === 'edit' || state.tool === 'text' ? 'pointer' : 'cell';
 }
 
 function beginPan(event) {
@@ -866,6 +950,10 @@ canvas.addEventListener('pointerdown', (event) => {
   if (event.button === 1 || state.tool === 'pan' || state.spacePressed) { event.preventDefault(); beginPan(event); return; }
   if (event.button !== 0) return;
   const point = canvasPoint(event);
+  if (state.tool === 'view') {
+    state.drawingView = true; state.viewStart = point; state.viewPreview = { ...normalizeRect(point, point), name: 'New view' }; state.viewSnapshot = documentSnapshot();
+    canvas.setPointerCapture(event.pointerId); draw(); return;
+  }
   if (state.tool === 'ruler') {
     let index = state.selectedRuler, part = index !== null && state.rulers[index] && floorItemVisible(state.rulers[index]) ? rulerPartAtEvent(event, state.rulers[index]) : null;
     if (!part) {
@@ -984,6 +1072,7 @@ canvas.addEventListener('pointermove', (event) => {
     const point = screenPoint(event); state.offset.x += point.x - state.panPointer.x; state.offset.y += point.y - state.panPointer.y;
     state.panPointer = point; draw(); return;
   }
+  if (state.drawingView) { state.viewPreview = { ...normalizeRect(state.viewStart, canvasPoint(event)), name: 'New view' }; draw(); return; }
   if (state.rulerDragMode && state.selectedRuler !== null) {
     const ruler = state.rulers[state.selectedRuler];
     if (state.rulerDragMode === 'label') {
@@ -1041,6 +1130,15 @@ canvas.addEventListener('pointermove', (event) => {
 
 function endPointer() {
   if (state.panning) { state.panning = false; state.panPointer = null; markDirty(); persist(); setCanvasCursor(); return; }
+  if (state.drawingView) {
+    const view = state.viewPreview; const snapshot = state.viewSnapshot;
+    state.drawingView = false; state.viewStart = null; state.viewPreview = null; state.viewSnapshot = null;
+    if (view && view.width > 1 && view.height > 1) {
+      const name = prompt('View name:', 'View ' + (state.views.length + 1));
+      if (name && name.trim()) { pushHistory(snapshot); state.views.push({ id: createViewId(), name: name.trim().slice(0, 100), x: view.x, y: view.y, width: view.width, height: view.height }); markDirty(); persist(); }
+    }
+    setTool('edit'); updateUi(); draw(); setCanvasCursor(); return;
+  }
   if (state.rulerDragMode && state.selectedRuler !== null) {
     if (JSON.stringify(state.rulers) !== JSON.stringify(state.rulerDragSnapshot.rulers)) {
       pushHistory(state.rulerDragSnapshot); markDirty(); persist();
@@ -1066,7 +1164,8 @@ function endPointer() {
     const shape = state.shapePreview;
     const usable = shape && (shape.radius > 0 || (shape.a && shape.b && !samePoint(shape.a, shape.b)));
     if (usable) commitShapes([...state.shapes, shape]);
-    state.drawingShape = false; state.shapeStart = null; state.shapePreview = null; draw(); return;
+    state.drawingShape = false; state.shapeStart = null; state.shapePreview = null;
+    draw(); return;
   }
   if (state.editingHandle && state.selectedWall !== null) {
     const wall = state.walls[state.selectedWall];
@@ -1109,6 +1208,7 @@ function setTool(tool) {
   state.rulerDragMode = null; state.rulerDragSnapshot = null; state.rulerDragStart = null; state.rulerDragOriginal = null;
   state.drawingRuler = false; state.rulerStart = null; state.rulerPreview = null;
   state.drawingShape = false; state.shapeStart = null; state.shapePreview = null;
+  state.drawingView = false; state.viewStart = null; state.viewPreview = null; state.viewSnapshot = null;
   state.shapeDragMode = null; state.shapeDragSnapshot = null; state.shapeDragStart = null; state.shapeDragOriginal = null;
   state.objectDragMode = null; state.objectDragSnapshot = null; state.objectDragStart = null; state.objectDragOriginal = null;
   if (tool !== 'edit') { state.selectedWall = null; clearFloorMultiSelection(); state.selectMode = 'single'; }
@@ -1127,6 +1227,7 @@ function setTool(tool) {
     ruler: ['Ruler tool', 'Drag to measure; select and drag a line, endpoint, or label'],
     shapes: ['Shapes tool', 'Choose a shape, then drag on the canvas; selected shapes can be moved or resized'],
     objects: ['Column tool', 'Click to insert a 1 ft x 1 ft column; drag to move or resize'],
+    view: ['Add view', 'Drag a rectangle around the area to save as a view'],
     text: ['Text tool', 'Click to add - Drag to move - Double-click to edit'],
     erase: ['Erase tool', 'Click a wall to remove it'], pan: ['Pan tool', 'Drag to move the grid and plan'],
   }[tool];
@@ -1165,7 +1266,11 @@ function applyProject(project, options = {}) {
     object && normalizeObjectSymbol(object.symbol) && validPoint(object) && Number(object.width) > 0 && Number(object.height) > 0))) throw new Error('This plan contains invalid objects.');
   if (project.layers !== undefined && (!Array.isArray(project.layers) || !project.layers.every((layer) => layer && (layer.id === undefined || typeof layer.id === 'string'))))
     throw new Error('This plan contains invalid layers.');
+  if (project.views !== undefined && (!Array.isArray(project.views) || !project.views.every((view) => view && Number(view.width) > 0 && Number(view.height) > 0)))
+    throw new Error('This plan contains invalid saved views.');
   state.layers = normalizeLayers(project.layers || []);
+  state.views = normalizeViews(project.views || []);
+  ensureViewsLayer();
   const legacyThickness = Number(project.settings?.wallWidth);
   state.walls = project.walls.map((wall) => {
     const thickness = Number(wall.thickness);
@@ -1257,7 +1362,7 @@ async function openServerPlans() {
 }
 
 function resetProject() {
-  state.walls = []; state.labels = []; state.rulers = []; state.shapes = []; state.objects = []; state.layers = []; state.history = []; state.future = [];
+  state.walls = []; state.labels = []; state.rulers = []; state.shapes = []; state.objects = []; state.layers = []; state.views = []; ensureViewsLayer(); state.history = []; state.future = [];
   state.selectedWall = null; state.selectedLabel = null; state.selectedRuler = null; state.selectedShape = null; state.selectedObject = null; state.editingHandle = null; state.draggingLabel = false;
   state.start = null; state.preview = null; state.zoom = 1; state.offset = { x: 0, y: 0 };
   state.gridInches = 12; state.grid = gridPixels(12); state.wallWidth = 6;
@@ -1289,6 +1394,7 @@ document.querySelectorAll('[data-object]').forEach((button) => button.addEventLi
   setTool('objects');
 }));
 $('#undoButton').addEventListener('click', undo); $('#redoButton').addEventListener('click', redo);
+$('#addViewButton').addEventListener('click', () => setTool('view'));
 $('#centerButton').addEventListener('click', () => { if (state.offset.x || state.offset.y) markDirty(); state.offset = { x: 0, y: 0 }; persist(); draw(); });
 $('#clearButton').addEventListener('click', () => {
   if ((!state.walls.length && !state.labels.length && !state.rulers.length && !state.shapes.length && !state.objects.length) || !confirm('Clear the entire floor plan?')) return;

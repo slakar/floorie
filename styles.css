@@ -29,16 +29,16 @@ button { color: inherit; }
 .tool { flex: 0 0 auto; }
 .tool:hover { background: #ece8dd; }
 .tool.active { color: #a83e22; background: #f1dfd7; border-color: #dfb5a7; }
-.tool-icon { height: 20px; font-size: 21px; line-height: 18px; }
-.wall-icon { width: 28px; height: 9px; margin: 5px 0 6px; border-top: 4px solid currentColor; border-bottom: 2px solid currentColor; }
-.erase-icon { font-size: 24px; }
-.pan-icon { font-size: 22px; }
-.text-icon { font-family: 'Instrument Serif', serif; font-size: 25px; }
-.ruler-icon, .shapes-icon, .object-icon { font-size: 23px; }
+.tool-icon { display: flex; align-items: center; justify-content: center; width: 30px; height: 22px; font-family: 'Segoe UI Symbol', 'Arial Unicode MS', 'DM Sans', sans-serif; font-size: 20px; line-height: 1; font-weight: 700; }
+.wall-icon { width: 30px; height: 13px; margin: 3px 0 4px; border-top: 4px solid currentColor; border-bottom: 2px solid currentColor; }
+.edit-icon, .ruler-icon, .shapes-icon, .object-icon, .erase-icon, .pan-icon, .undo-icon, .redo-icon, .center-icon { letter-spacing: 0; }
+.ruler-icon { font-size: 16px; font-weight: 800; }
+.shapes-icon, .object-icon, .erase-icon, .pan-icon, .undo-icon, .redo-icon, .center-icon { font-size: 19px; }
+.text-icon { font-family: 'Instrument Serif', Georgia, serif; font-size: 25px; font-weight: 700; }
 .shape-palette { position: absolute; z-index: 5; top: 16px; left: 96px; display: flex; width: 68px; flex-direction: column; gap: 5px; padding: 7px; border: 1px solid #c4c0b5; border-radius: 4px; background: #f7f4ec; box-shadow: 0 8px 28px rgba(48,45,38,.14); }
 .shape-palette[hidden] { display: none; }
 .shape-choice { display: flex; height: 52px; flex-direction: column; align-items: center; justify-content: center; gap: 2px; border: 1px solid transparent; border-radius: 3px; background: transparent; cursor: pointer; }
-.shape-choice span { font-size: 24px; line-height: 22px; }
+.shape-choice span { display: flex; align-items: center; justify-content: center; width: 28px; height: 24px; font-family: 'Segoe UI Symbol', 'Arial Unicode MS', 'DM Sans', sans-serif; font-size: 22px; line-height: 1; font-weight: 700; }
 .shape-choice small { color: #686a62; font-size: 9px; }
 .shape-choice:hover { background: #ece8dd; }
 .shape-choice.active { color: #a83e22; border-color: #dfb5a7; background: #f1dfd7; }
@@ -134,3 +134,9 @@ kbd { min-width: 25px; padding: 4px 6px; border: 1px solid #ccc7bb; border-botto
 .layer-empty { margin: 0; color: #8a8b84; font-size: 11px; line-height: 1.5; }
 .layer-dialog { width: min(460px, calc(100vw - 40px)); }
 .layer-dialog-body { padding: 20px 24px 4px; }
+.views-panel { margin: 3px 0 16px; padding: 14px 0; border-top: 1px solid #d5d0c5; border-bottom: 1px solid #d5d0c5; }
+.view-row { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 8px; padding: 8px 7px; border: 1px solid #ddd8cd; border-radius: 3px; background: #fffdf8; }
+.view-row strong { min-width: 0; overflow: hidden; color: #292b26; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.view-row small { color: #777970; font-size: 9px; }
+.view-row .text-button { color: #a34329; font-size: 10px; }
+.view-empty { margin: 0; color: #8a8b84; font-size: 11px; line-height: 1.5; }

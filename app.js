@@ -1305,15 +1305,15 @@ function setTool(tool) {
   if (tool !== 'text') state.selectedLabel = null;
   if (tool !== 'ruler') state.selectedRuler = null;
   state.tool = tool;
-  $('#shapePalette').hidden = tool !== 'shapes';
-  $('#objectPalette').hidden = tool !== 'objects';
+  $('#shapePalette').hidden = true;
   syncSelectModeUi();
   document.querySelectorAll('[data-tool]').forEach((button) => button.classList.toggle('active', button.dataset.tool === tool));
+  $('#insertToolButton').classList.toggle('active', ['wall', 'shapes', 'objects', 'text'].includes(tool));
   const content = {
     wall: ['Wall tool', 'Drag between grid points - Hold Shift for a straight wall'],
     edit: [state.selectMode === 'highlight' ? 'Highlight Select' : 'Select tool', state.selectMode === 'highlight' ? 'Drag a box around complete items; drag a highlighted item to move the group' : 'Select a wall or column; drag endpoints, handles, or the column body'],
     ruler: ['Ruler tool', 'Drag to measure; select and drag a line, endpoint, or label'],
-    shapes: ['Shapes tool', state.shapeKind === 'polygon' ? 'Click each corner; click the first point or double-click to finish' : 'Choose a shape, then drag on the canvas; selected shapes can be moved or resized'],
+    shapes: ['Insert shape', state.shapeKind === 'polygon' ? 'Click each corner; click the first point or double-click to finish' : 'Drag on the canvas; selected shapes can be moved or resized'],
     objects: ['Column tool', 'Click to insert a 1 ft x 1 ft column; drag to move or resize'],
     view: ['Add view', 'Drag a rectangle around the area to save as a view'],
     text: ['Text tool', 'Click to add - Drag to move - Double-click to edit'],
@@ -1468,6 +1468,11 @@ function requestNewProject() {
 }
 
 document.querySelectorAll('[data-tool]').forEach((button) => button.addEventListener('click', () => setTool(button.dataset.tool)));
+$('#insertToolButton').addEventListener('click', () => {
+  const palette = $('#shapePalette'), opening = palette.hidden;
+  palette.hidden = !opening;
+  if (opening) $('#selectPalette').hidden = true;
+});
 document.querySelectorAll('[data-select-mode]').forEach((button) => button.addEventListener('click', () => {
   state.selectMode = button.dataset.selectMode; if (state.selectMode === 'single') clearFloorMultiSelection(); else clearFloorSingleSelection();
   document.querySelectorAll('[data-select-mode]').forEach((choice) => choice.classList.toggle('active', choice === button));
@@ -1475,13 +1480,13 @@ document.querySelectorAll('[data-select-mode]').forEach((button) => button.addEv
 }));
 document.querySelectorAll('[data-shape]').forEach((button) => button.addEventListener('click', () => {
   state.shapeKind = button.dataset.shape;
-  document.querySelectorAll('[data-shape]').forEach((choice) => choice.classList.toggle('active', choice === button));
+  document.querySelectorAll('#shapePalette .shape-choice').forEach((choice) => choice.classList.toggle('active', choice === button));
   setTool('shapes');
 }));
-document.querySelectorAll('[data-object]').forEach((button) => button.addEventListener('click', () => {
-  state.objectKind = button.dataset.object;
-  document.querySelectorAll('[data-object]').forEach((choice) => choice.classList.toggle('active', choice === button));
-  setTool('objects');
+document.querySelectorAll('[data-insert-tool]').forEach((button) => button.addEventListener('click', () => {
+  if (button.dataset.object) state.objectKind = button.dataset.object;
+  document.querySelectorAll('#shapePalette .shape-choice').forEach((choice) => choice.classList.toggle('active', choice === button));
+  setTool(button.dataset.insertTool);
 }));
 function setPropertiesOpen(open) {
   $('#extendedProperties').hidden = !open; $('#propertiesToggle').classList.toggle('open', open);

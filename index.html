@@ -37,23 +37,14 @@
 
       <main id="floorWorkspace" class="workspace">
         <aside class="toolbar" aria-label="Drawing tools">
-          <button class="tool active" data-tool="wall" title="Draw walls (W)">
-            <span class="tool-icon wall-icon"></span><span>Wall</span>
+          <button id="insertToolButton" class="tool active" type="button" title="Insert walls, shapes, columns, or text">
+            <span class="tool-icon shapes-icon">+</span><span>Insert</span>
           </button>
           <button class="tool" data-tool="edit" title="Select or edit wall endpoints (V)">
             <span class="tool-icon edit-icon">&harr;</span><span>Edit</span>
           </button>
           <button class="tool" data-tool="ruler" title="Measure between any two points (R)">
             <span class="tool-icon ruler-icon">&#8866;&#9472;&#8867;</span><span>Ruler</span>
-          </button>
-          <button class="tool" data-tool="shapes" title="Insert shapes (S)">
-            <span class="tool-icon shapes-icon">&#9633;</span><span>Shapes</span>
-          </button>
-          <button class="tool" data-tool="objects" title="Insert columns (O)">
-            <span class="tool-icon object-icon">&#9632;</span><span>Column</span>
-          </button>
-          <button class="tool" data-tool="text" title="Add and move text labels (T)">
-            <span class="tool-icon text-icon">T</span><span>Text</span>
           </button>
           <button class="tool" data-tool="erase" title="Erase walls (E)">
             <span class="tool-icon erase-icon">&#9003;</span><span>Erase</span>
@@ -66,16 +57,16 @@
           <button id="redoButton" class="tool compact" title="Redo (Ctrl+Shift+Z)"><span class="tool-icon redo-icon">&#8631;</span><span>Redo</span></button>
           <button id="centerButton" class="tool compact" title="Center the grid"><span class="tool-icon center-icon">&#8857;</span><span>Center</span></button>
         </aside>
-        <aside id="shapePalette" class="shape-palette" aria-label="Shape choices" hidden>
-          <button class="shape-choice active" data-shape="square" title="Square"><span>&#9633;</span><small>Square</small></button>
+        <aside id="shapePalette" class="shape-palette" aria-label="Insert choices" hidden>
+          <button class="shape-choice active" data-insert-tool="wall" title="Wall"><span class="wall-icon"></span><small>Wall</small></button>
+          <button class="shape-choice" data-shape="square" title="Square"><span>&#9633;</span><small>Square</small></button>
           <button class="shape-choice" data-shape="rectangle" title="Rectangle"><span>&#9645;</span><small>Rect</small></button>
           <button class="shape-choice" data-shape="circle" title="Circle"><span>&#9675;</span><small>Circle</small></button>
           <button class="shape-choice" data-shape="line" title="Line"><span>/</span><small>Line</small></button>
           <button class="shape-choice" data-shape="semicircle" title="Semi-circle"><span>&#8745;</span><small>Half</small></button>
           <button class="shape-choice" data-shape="polygon" title="Polygon area"><span>&#11041;</span><small>Polygon</small></button>
-        </aside>
-        <aside id="objectPalette" class="shape-palette object-palette" aria-label="Object choices" hidden>
-          <button class="shape-choice active" data-object="column" title="Column"><span>&#9632;</span><small>Column</small></button>
+          <button class="shape-choice" data-insert-tool="objects" data-object="column" title="Column"><span>&#9632;</span><small>Column</small></button>
+          <button class="shape-choice" data-insert-tool="text" title="Text"><span class="text-icon">T</span><small>Text</small></button>
         </aside>
         <aside id="selectPalette" class="shape-palette select-palette" aria-label="Selection choices" hidden>
           <button class="shape-choice active" data-select-mode="single" title="Select one item"><span>&#9679;</span><small>Select</small></button>

@@ -14,7 +14,7 @@ button { color: inherit; }
 .eyebrow { color: #797b72; font-size: 10px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
 .top-actions { display: flex; align-items: center; gap: 8px; }
 .page-switch { display: inline-flex; justify-self: start; padding: 3px; border: 1px solid #c9c5ba; border-radius: 4px; background: #fffdf8; }
-.canvas-page-switch { position: absolute; z-index: 8; top: calc(78px + 16px); right: calc(276px + 18px); box-shadow: 0 8px 28px rgba(48,45,38,.12); }
+.canvas-page-switch { position: absolute; z-index: 8; bottom: 20px; left: calc(86px + 146px); box-shadow: 0 4px 18px rgba(48,45,38,.08); }
 .page-button { border: 0; border-radius: 3px; padding: 8px 12px; background: transparent; color: #686a62; cursor: pointer; font-size: 11px; font-weight: 700; }
 .page-button.active { background: #242620; color: #fffdf6; }
 .save-status { color: #74766e; font-size: 12px; }
@@ -48,6 +48,35 @@ button { color: inherit; }
 .tool.compact { height: 53px; }
 .tool-divider { width: 42px; height: 1px; margin: 7px 0; background: #d3cfc4; }
 .canvas-shell { position: relative; overflow: hidden; background: #e4e0d5; }
+.properties-toggle { position: absolute; z-index: 7; top: 50%; right: 0; width: 24px; height: 54px; transform: translateY(-50%); border: 1px solid #bdb8ac; border-right: 0; border-radius: 4px 0 0 4px; background: #f7f4ec; color: #a34329; box-shadow: -3px 5px 14px rgba(48,45,38,.12); cursor: pointer; font-size: 25px; line-height: 1; }
+.properties-toggle:hover { background: #efe9de; }
+.properties-toggle.open { right: 279px; }
+.extended-properties { position: absolute; z-index: 6; inset: 0 0 0 auto; width: 280px; padding: 19px 16px; overflow-y: auto; border-left: 1px solid #bdb8ac; background: rgba(247,244,236,.97); box-shadow: -10px 0 28px rgba(48,45,38,.13); }
+.extended-properties[hidden] { display: none; }
+.extended-properties-heading { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 20px; }
+.extended-properties-heading > div { display: flex; flex-direction: column; gap: 4px; }
+.extended-properties-heading strong { font: 400 22px 'Instrument Serif', serif; }
+.extended-properties-heading button { width: 29px; height: 29px; border: 0; background: transparent; color: #686a62; cursor: pointer; font-size: 22px; }
+.area-dropdown { border: 1px solid #d1ccc0; border-radius: 4px; background: #fffdf8; }
+.area-dropdown summary { padding: 12px 13px; color: #30322d; cursor: pointer; font-size: 12px; font-weight: 700; }
+.area-dropdown dl { margin: 0; padding: 2px 13px 8px; }
+.area-dropdown dl div { display: flex; justify-content: space-between; gap: 12px; padding: 9px 0; border-top: 1px solid #e2ded4; }
+.area-dropdown dt { color: #777970; font-size: 10px; }
+.area-dropdown dd { margin: 0; color: #a34329; font-size: 11px; font-weight: 700; text-align: right; }
+.polygon-list-heading { display: flex; align-items: center; justify-content: space-between; padding: 11px 13px 7px; border-top: 1px solid #e2ded4; color: #777970; font-size: 9px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.polygon-list-heading small { color: #a34329; font-size: 9px; }
+.polygon-area-list { display: flex; flex-direction: column; gap: 5px; padding: 0 8px 10px; }
+.polygon-area-empty { margin: 3px 5px; color: #8a8b84; font-size: 10px; line-height: 1.45; }
+.polygon-area-row { display: grid; grid-template-columns: minmax(0, 1fr) 30px 30px; gap: 0; border: 1px solid #ddd8cd; border-radius: 3px; background: #f7f4ec; }
+.polygon-area-row.selected { border-color: #d49a88; background: #f1dfd7; box-shadow: inset 3px 0 #b54b2d; }
+.polygon-area-select { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 9px 8px 9px 11px; border: 0; background: transparent; cursor: pointer; text-align: left; }
+.polygon-area-select span { overflow: hidden; font-size: 10px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.polygon-area-select strong { flex: 0 0 auto; color: #a34329; font-size: 9px; }
+.polygon-area-action { width: 30px; border: 0; border-left: 1px solid #ddd8cd; background: transparent; color: #777970; cursor: pointer; font-size: 15px; }
+.polygon-area-action:hover { background: #e8e3d8; color: #a34329; }
+.polygon-area-delete { color: #8a5b4e; font-size: 17px; }
+.polygon-area-delete:hover { background: #ead4cc; color: #9f351d; }
+.area-dropdown p { margin: 0; padding: 11px 13px 13px; border-top: 1px solid #e2ded4; color: #777970; font-size: 10px; line-height: 1.55; }
 #planCanvas, #elevationCanvas { display: block; width: 100%; height: 100%; cursor: crosshair; touch-action: none; }
 .elevation-workspace[hidden] { display: none; }
 .workspace[hidden] { display: none; }
@@ -118,7 +147,7 @@ button { color: inherit; }
 .tips { display: flex; flex-direction: column; gap: 10px; padding-top: 20px; border-top: 1px solid #d5d0c5; }
 .tips > div { display: flex; align-items: center; justify-content: space-between; color: #686a62; font-size: 10px; }
 kbd { min-width: 25px; padding: 4px 6px; border: 1px solid #ccc7bb; border-bottom-width: 2px; border-radius: 3px; background: #fffdf8; color: #55574f; font: 9px 'DM Sans', sans-serif; text-align: center; }
-@media (max-width: 1100px) { .workspace { grid-template-columns: 76px 1fr 230px; } .shape-palette { left: 84px; } .topbar { grid-template-columns: 170px 1fr auto; } .canvas-page-switch { right: calc(230px + 14px); } .save-status { display: none; } .button { padding: 10px 11px; font-size: 11px; } }
+@media (max-width: 1100px) { .workspace { grid-template-columns: 76px 1fr 230px; } .shape-palette { left: 84px; } .topbar { grid-template-columns: 170px 1fr auto; } .canvas-page-switch { left: calc(76px + 146px); } .save-status { display: none; } .button { padding: 10px 11px; font-size: 11px; } }
 .layers-panel { margin: 3px 0 16px; padding: 14px 0; border-top: 1px solid #d5d0c5; border-bottom: 1px solid #d5d0c5; }
 .layer-assignment-field { margin-bottom: 13px; }
 .layers-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 9px; }

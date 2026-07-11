@@ -35,7 +35,11 @@ For stronger separation, set the `GRIDLINE_DATA_DIR` environment variable to a w
 - `api.php` — same-origin save/list/load API
 - `data/*.json` — server-saved plan envelopes
 
-Plans also autosave locally in the browser and can be downloaded or loaded as portable JSON files. Server saves preserve walls, text labels, measurements, grid settings, and viewport state.
+Plans also autosave locally in the browser and can be downloaded or loaded as portable JSON files. Server saves preserve walls, text labels, measurements, shapes (including measured polygons), grid settings, and viewport state.
+
+## Polygon areas
+
+Choose **Shapes → Polygon**, click each corner of the outline, then click the first corner or double-click to finish. The right-edge properties drawer reports polygon areas in square feet and provides a selectable list where polygons can be renamed or deleted. Polygon vertices can be dragged after selection, and polygon shade supports the full 0–100% range.
 
 ## Security
 

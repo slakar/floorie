@@ -36,6 +36,7 @@ const state = {
   drawingRuler: false, rulerStart: null, rulerPreview: null,
   selectedRuler: null, rulerDragMode: null, rulerDragSnapshot: null, rulerDragStart: null, rulerDragOriginal: null,
   drawingShape: false, shapeStart: null, shapePreview: null, shapeKind: 'square', selectedShape: null,
+  drawingPolygon: false, polygonPoints: [], polygonPointer: null,
   shapeDragMode: null, shapeDragSnapshot: null, shapeDragStart: null, shapeDragOriginal: null,
   objectKind: 'column', selectedObject: null, objectDragMode: null, objectDragSnapshot: null, objectDragStart: null, objectDragOriginal: null,
   wallSizeSnapshot: null, lineStyleSnapshot: null,
@@ -80,7 +81,8 @@ const snap = (value) => Math.round(value / state.grid) * state.grid;
 const samePoint = (a, b) => a.x === b.x && a.y === b.y;
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const normalizeColor = (value, fallback) => typeof value === 'string' && COLOR_PATTERN.test(value) ? value.toLowerCase() : fallback;
-const normalizeShade = (value) => Number.isFinite(Number(value)) ? clamp(Number(value), .2, 1) : 1;
+const normalizeShade = (value, minimum = .2) => Number.isFinite(Number(value)) ? clamp(Number(value), minimum, 1) : 1;
+const shapeShade = (shape) => normalizeShade(shape?.shade, shape?.type === 'polygon' ? 0 : .2);
 const normalizeLayerOpacity = (value) => Number.isFinite(Number(value)) ? clamp(Number(value), 0, 1) : 1;
 function createLayerId() { return `layer-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`; }
 function normalizeLayerName(value, fallback) {
@@ -330,8 +332,27 @@ function shapeFromDrag(type, start, end) {
   return { type, center: { ...start }, radius: Math.hypot(end.x - start.x, end.y - start.y), color: DEFAULT_SHAPE_COLOR, shade: 1 };
 }
 
+function polygonAreaPixels(points) {
+  if (!Array.isArray(points) || points.length < 3) return 0;
+  let twiceArea = 0;
+  points.forEach((point, index) => { const next = points[(index + 1) % points.length]; twiceArea += point.x * next.y - next.x * point.y; });
+  return Math.abs(twiceArea) / 2;
+}
+function polygonAreaSquareFeet(shape) { const scale = state.gridInches / state.grid; return polygonAreaPixels(shape?.points) * scale * scale / 144; }
+function formatArea(squareFeet) { return `${trimNumber(Math.max(0, Number(squareFeet) || 0), 2)} sq ft`; }
+function normalizePolygonName(value) { return typeof value === 'string' ? value.trim().slice(0, 80) : ''; }
+function polygonEdges(points) { return points.map((point, index) => [point, points[(index + 1) % points.length]]); }
+function pointInPolygon(point, points) {
+  let inside = false;
+  for (let i = 0, j = points.length - 1; i < points.length; j = i, i += 1) {
+    const a = points[i], b = points[j];
+    if (((a.y > point.y) !== (b.y > point.y)) && point.x < (b.x - a.x) * (point.y - a.y) / (b.y - a.y) + a.x) inside = !inside;
+  }
+  return inside;
+}
+
 function drawShape(shape, preview = false, selected = false) {
-  const style = preview ? { visible: true, color: '#b54b2d', opacity: .7 } : floorItemLayerStyle(shape, DEFAULT_SHAPE_COLOR, normalizeShade(shape.shade));
+  const style = preview ? { visible: true, color: '#b54b2d', opacity: .7 } : floorItemLayerStyle(shape, DEFAULT_SHAPE_COLOR, shapeShade(shape));
   if (!style.visible) return;
   ctx.save(); ctx.translate(state.offset.x, state.offset.y); ctx.scale(state.zoom, state.zoom);
   ctx.strokeStyle = style.color; ctx.globalAlpha = style.opacity;
@@ -340,6 +361,8 @@ function drawShape(shape, preview = false, selected = false) {
   else if (shape.type === 'square' || shape.type === 'rectangle') {
     const x = Math.min(shape.a.x, shape.b.x), y = Math.min(shape.a.y, shape.b.y);
     ctx.rect(x, y, Math.abs(shape.b.x - shape.a.x), Math.abs(shape.b.y - shape.a.y));
+  } else if (shape.type === 'polygon') {
+    shape.points.forEach((point, index) => index ? ctx.lineTo(point.x, point.y) : ctx.moveTo(point.x, point.y)); ctx.closePath();
   } else if (shape.type === 'circle') ctx.arc(shape.center.x, shape.center.y, shape.radius, 0, Math.PI * 2);
   else {
     ctx.arc(shape.center.x, shape.center.y, shape.radius, Math.PI, Math.PI * 2);
@@ -362,18 +385,22 @@ function drawScreenHandle(point) {
 function radialHandle(shape) { return { x: shape.center.x + shape.radius, y: shape.center.y }; }
 
 function drawShapeHandles(shape) {
-  if (shape.type === 'line' || shape.type === 'square' || shape.type === 'rectangle') [shape.a, shape.b].forEach(drawScreenHandle);
+  if (shape.type === 'polygon') shape.points.forEach(drawScreenHandle);
+  else if (shape.type === 'line' || shape.type === 'square' || shape.type === 'rectangle') [shape.a, shape.b].forEach(drawScreenHandle);
   else { drawScreenHandle(shape.center); drawScreenHandle(radialHandle(shape)); }
 }
 
 function moveShape(shape, dx, dy) {
-  if (shape.a) { shape.a = { x: shape.a.x + dx, y: shape.a.y + dy }; shape.b = { x: shape.b.x + dx, y: shape.b.y + dy }; }
+  if (shape.type === 'polygon') shape.points = shape.points.map((point) => ({ x: point.x + dx, y: point.y + dy }));
+  else if (shape.a) { shape.a = { x: shape.a.x + dx, y: shape.a.y + dy }; shape.b = { x: shape.b.x + dx, y: shape.b.y + dy }; }
   else shape.center = { x: shape.center.x + dx, y: shape.center.y + dy };
 }
 
 function shapePartAtEvent(event, shape) {
   const raw = rawCanvasPoint(event), near = (point) => Math.hypot(raw.x - point.x, raw.y - point.y) <= 12 / state.zoom;
-  if (shape.type === 'line' || shape.type === 'square' || shape.type === 'rectangle') {
+  if (shape.type === 'polygon') {
+    const vertex = shape.points.findIndex(near); if (vertex >= 0) return `vertex:${vertex}`;
+  } else if (shape.type === 'line' || shape.type === 'square' || shape.type === 'rectangle') {
     if (near(shape.a)) return 'a'; if (near(shape.b)) return 'b';
   } else {
     if (near(radialHandle(shape))) return 'radius'; if (near(shape.center)) return 'body';
@@ -388,6 +415,7 @@ function updateShapeDrag(event) {
     const dx = point.x - state.shapeDragStart.x, dy = point.y - state.shapeDragStart.y;
     Object.assign(shape, structuredClone(state.shapeDragOriginal)); moveShape(shape, dx, dy); return;
   }
+  if (shape.type === 'polygon' && state.shapeDragMode.startsWith('vertex:')) { shape.points[Number(state.shapeDragMode.split(':')[1])] = point; return; }
   if (shape.type === 'circle' || shape.type === 'semicircle') {
     shape.radius = Math.max(1, Math.hypot(point.x - shape.center.x, point.y - shape.center.y)); return;
   }
@@ -536,6 +564,11 @@ function draw() {
   if (state.preview) drawWall(state.preview, true);
   if (state.rulerPreview) drawRuler(state.rulerPreview, true);
   if (state.shapePreview) drawShape(state.shapePreview, true);
+  if (state.drawingPolygon && state.polygonPoints.length) {
+    const points = state.polygonPointer ? [...state.polygonPoints, state.polygonPointer] : state.polygonPoints;
+    drawShape({ type: 'polygon', points, color: DEFAULT_SHAPE_COLOR, shade: 1 }, true);
+    state.polygonPoints.forEach(drawScreenHandle);
+  }
   if (state.tool === 'shapes' && state.selectedShape !== null && state.shapes[state.selectedShape] && floorItemVisible(state.shapes[state.selectedShape])) drawShapeHandles(state.shapes[state.selectedShape]);
   if (state.tool === 'edit' && state.selectMode === 'single' && state.selectedWall !== null && state.walls[state.selectedWall] && floorItemVisible(state.walls[state.selectedWall])) drawEditHandles(state.walls[state.selectedWall]);
   drawFloorSelectionBox();
@@ -544,7 +577,7 @@ function draw() {
 
 function projectData() {
   return {
-    format: 'gridline-floor-plan', version: 8, exportedAt: new Date().toISOString(),
+    format: 'gridline-floor-plan', version: 9, exportedAt: new Date().toISOString(),
     settings: { gridInches: state.gridInches, wallWidth: state.wallWidth, showText: state.showText, showDimensions: state.showDimensions },
     viewport: { zoom: state.zoom, offset: { ...state.offset } },
     layers: state.layers.map((layer) => ({ id: layer.id, name: layer.name, color: normalizeColor(layer.color, DEFAULT_LAYER_COLOR), opacity: normalizeLayerOpacity(layer.opacity), visible: layer.visible !== false })),
@@ -605,6 +638,7 @@ function shapeAtPoint(point) {
       const edges = [[{ x: x1, y: y1 }, { x: x2, y: y1 }], [{ x: x2, y: y1 }, { x: x2, y: y2 }], [{ x: x2, y: y2 }, { x: x1, y: y2 }], [{ x: x1, y: y2 }, { x: x1, y: y1 }]];
       if (edges.some(([a, b]) => pointToSegmentDistance(point, a, b) <= tolerance)) return i;
     }
+    if (shape.type === 'polygon' && polygonEdges(shape.points).some(([a, b]) => pointToSegmentDistance(point, a, b) <= tolerance)) return i;
     if (shape.type === 'circle' && Math.abs(Math.hypot(point.x - shape.center.x, point.y - shape.center.y) - shape.radius) <= tolerance) return i;
     if (shape.type === 'semicircle') {
       const arcHit = point.y <= shape.center.y + tolerance && Math.abs(Math.hypot(point.x - shape.center.x, point.y - shape.center.y) - shape.radius) <= tolerance;
@@ -623,6 +657,7 @@ function shapeContainsPoint(shape, point) {
     const y1 = Math.min(shape.a.y, shape.b.y), y2 = Math.max(shape.a.y, shape.b.y);
     return point.x >= x1 - tolerance && point.x <= x2 + tolerance && point.y >= y1 - tolerance && point.y <= y2 + tolerance;
   }
+  if (shape.type === 'polygon') return pointInPolygon(point, shape.points) || polygonEdges(shape.points).some(([a, b]) => pointToSegmentDistance(point, a, b) <= tolerance);
   if (shape.type === 'circle') return Math.hypot(point.x - shape.center.x, point.y - shape.center.y) <= shape.radius + tolerance;
   return point.y <= shape.center.y + tolerance && point.x >= shape.center.x - shape.radius - tolerance && point.x <= shape.center.x + shape.radius + tolerance && point.y >= shape.center.y - shape.radius - tolerance;
 }
@@ -636,7 +671,7 @@ function floorSelectionIncludes(kind, index) { return state.multiSelected[kind]?
 function normalizedRect(a, b) { return { x1: Math.min(a.x, b.x), y1: Math.min(a.y, b.y), x2: Math.max(a.x, b.x), y2: Math.max(a.y, b.y) }; }
 function boundsFromPoints(points) { return points.reduce((box, point) => ({ x1: Math.min(box.x1, point.x), y1: Math.min(box.y1, point.y), x2: Math.max(box.x2, point.x), y2: Math.max(box.y2, point.y) }), { x1: Infinity, y1: Infinity, x2: -Infinity, y2: -Infinity }); }
 function labelBounds(label) { const metrics = labelMetrics(label); return { x1: label.x - metrics.width / 2 - 7, y1: label.y - metrics.height / 2 - 4, x2: label.x + metrics.width / 2 + 7, y2: label.y + metrics.height / 2 + 4 }; }
-function shapeBounds(shape) { if (shape.a) return boundsFromPoints([shape.a, shape.b]); if (shape.type === 'semicircle') return { x1: shape.center.x - shape.radius, y1: shape.center.y - shape.radius, x2: shape.center.x + shape.radius, y2: shape.center.y }; return { x1: shape.center.x - shape.radius, y1: shape.center.y - shape.radius, x2: shape.center.x + shape.radius, y2: shape.center.y + shape.radius }; }
+function shapeBounds(shape) { if (shape.type === 'polygon') return boundsFromPoints(shape.points); if (shape.a) return boundsFromPoints([shape.a, shape.b]); if (shape.type === 'semicircle') return { x1: shape.center.x - shape.radius, y1: shape.center.y - shape.radius, x2: shape.center.x + shape.radius, y2: shape.center.y }; return { x1: shape.center.x - shape.radius, y1: shape.center.y - shape.radius, x2: shape.center.x + shape.radius, y2: shape.center.y + shape.radius }; }
 function floorItemBounds(kind, item) { if (kind === 'walls' || kind === 'rulers') return boundsFromPoints([item.a, item.b]); if (kind === 'labels') return labelBounds(item); if (kind === 'shapes') return shapeBounds(item); if (kind === 'objects') return objectBounds(item); return null; }
 function rectContainsBounds(rect, bounds) { return bounds && bounds.x1 >= rect.x1 && bounds.y1 >= rect.y1 && bounds.x2 <= rect.x2 && bounds.y2 <= rect.y2; }
 function selectFloorItemsInRect(a, b) { const rect = normalizedRect(a, b), selection = emptyFloorSelection(); state.walls.forEach((item, index) => { if (floorItemVisible(item) && rectContainsBounds(rect, floorItemBounds('walls', item))) selection.walls.push(index); }); state.labels.forEach((item, index) => { if (floorItemVisible(item) && rectContainsBounds(rect, floorItemBounds('labels', item))) selection.labels.push(index); }); state.rulers.forEach((item, index) => { if (floorItemVisible(item) && rectContainsBounds(rect, floorItemBounds('rulers', item))) selection.rulers.push(index); }); state.shapes.forEach((item, index) => { if (floorItemVisible(item) && rectContainsBounds(rect, floorItemBounds('shapes', item))) selection.shapes.push(index); }); state.objects.forEach((item, index) => { if (floorItemVisible(item) && rectContainsBounds(rect, floorItemBounds('objects', item))) selection.objects.push(index); }); return selection; }
@@ -653,6 +688,7 @@ function isTypingTarget(target) { return target && (['INPUT', 'TEXTAREA', 'SELEC
 function shapeTypeLabel(shape) { return shape.type === 'semicircle' ? 'semi-circle' : shape.type; }
 
 function shapeSizeText(shape) {
+  if (shape.type === 'polygon') return `${shape.points.length} vertices · ${formatArea(polygonAreaSquareFeet(shape))}`;
   if (shape.type === 'line') return formatLength(wallLengthInches(shape));
   if (shape.type === 'square' || shape.type === 'rectangle') {
     const width = formatLength(pixelsToInches(Math.abs(shape.b.x - shape.a.x)));
@@ -692,6 +728,7 @@ function selectedSizeInfo() {
   };
   const shape = state.selectedShape !== null ? state.shapes[state.selectedShape] : null;
   if (!shape) return null;
+  if (shape.type === 'polygon') return null;
   if (shape.type === 'line') return { lengthLabel: 'Selected line length (ft)', length: feetValueFromInches(wallLengthInches(shape)) };
   if (shape.type === 'square') return { lengthLabel: 'Selected side length (ft)', length: feetValueFromInches(pixelsToInches(Math.abs(shape.b.x - shape.a.x))) };
   if (shape.type === 'rectangle') return {
@@ -901,6 +938,32 @@ function renderWallList() {
   $('#objectCount').textContent = String(state.objects.length);
 }
 
+function renderPolygonAreaList() {
+  const list = $('#polygonAreaList'); if (!list) return;
+  const polygons = state.shapes.map((shape, index) => ({ shape, index })).filter(({ shape }) => shape.type === 'polygon');
+  $('#polygonListCount').textContent = String(polygons.length); list.replaceChildren();
+  if (!polygons.length) {
+    const empty = document.createElement('p'); empty.className = 'polygon-area-empty'; empty.textContent = 'No polygons drawn yet.'; list.append(empty); return;
+  }
+  polygons.forEach(({ shape, index }, polygonIndex) => {
+    const displayName = normalizePolygonName(shape.name) || `Polygon ${polygonIndex + 1}`;
+    const row = document.createElement('div'); row.className = 'polygon-area-row'; row.classList.toggle('selected', state.selectedShape === index);
+    const select = document.createElement('button'); select.type = 'button'; select.className = 'polygon-area-select'; select.setAttribute('aria-pressed', String(state.selectedShape === index));
+    const name = document.createElement('span'); name.textContent = displayName;
+    const area = document.createElement('strong'); area.textContent = formatArea(polygonAreaSquareFeet(shape));
+    const rename = document.createElement('button'); rename.type = 'button'; rename.className = 'polygon-area-action polygon-area-rename'; rename.innerHTML = '&#9998;'; rename.title = `Rename ${displayName}`; rename.setAttribute('aria-label', `Rename ${displayName}`);
+    const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'polygon-area-action polygon-area-delete'; remove.innerHTML = '&#128465;'; remove.title = `Delete ${displayName}`; remove.setAttribute('aria-label', `Delete ${displayName}`);
+    select.append(name, area); row.append(select, rename, remove); list.append(row);
+    select.addEventListener('click', () => { setTool('shapes'); state.selectedShape = index; state.selectedWall = null; state.selectedObject = null; updateUi(); draw(); });
+    rename.addEventListener('click', () => {
+      const nextName = prompt('Polygon name:', displayName); if (nextName === null) return;
+      const normalized = normalizePolygonName(nextName); if (!normalized || normalized === normalizePolygonName(shape.name)) return;
+      const snapshot = documentSnapshot(); shape.name = normalized; pushHistory(snapshot); markDirty(); persist(); updateUi(); draw();
+    });
+    remove.addEventListener('click', () => { state.selectedShape = null; commitShapes(state.shapes.filter((_, shapeIndex) => shapeIndex !== index)); });
+  });
+}
+
 function updateUi() {
   $('#wallCount').textContent = `${state.walls.length} wall${state.walls.length === 1 ? '' : 's'}`;
   $('#undoButton').disabled = !state.history.length; $('#redoButton').disabled = !state.future.length;
@@ -916,13 +979,14 @@ function updateUi() {
   const selectedLineLayer = selectedLine ? layerForItem(selectedLine.item) : null;
   const selectedLineMissingLayer = selectedLine ? itemHasMissingLayer(selectedLine.item) : false;
   $('#lineColor').disabled = !selectedLine || !!selectedLineLayer || selectedLineMissingLayer; $('#lineShade').disabled = !selectedLine || !!selectedLineLayer || selectedLineMissingLayer;
+  $('#lineShade').min = selectedLine?.item?.type === 'polygon' ? '0' : '20';
   if (selectedLineLayer) {
     const shade = Math.round(normalizeLayerOpacity(selectedLineLayer.opacity) * 100);
     $('#lineColor').value = selectedLineLayer.color; $('#lineColorValue').textContent = 'Layer'; $('#lineShade').value = String(shade); $('#lineShadeValue').textContent = `${shade}%`;
   } else if (selectedLineMissingLayer) {
     $('#lineColor').value = '#000000'; $('#lineColorValue').textContent = 'Missing'; $('#lineShade').value = '100'; $('#lineShadeValue').textContent = '100%';
   } else if (selectedLine) {
-    const color = normalizeColor(selectedLine.item.color, selectedLine.fallback), shade = Math.round(normalizeShade(selectedLine.item.shade) * 100);
+    const color = normalizeColor(selectedLine.item.color, selectedLine.fallback), shade = Math.round((selectedLine.item.type === 'polygon' ? shapeShade(selectedLine.item) : normalizeShade(selectedLine.item.shade)) * 100);
     $('#lineColor').value = color; $('#lineColorValue').textContent = color; $('#lineShade').value = String(shade); $('#lineShadeValue').textContent = `${shade}%`;
   } else { $('#lineColorValue').textContent = '0'; $('#lineShadeValue').textContent = '0'; }
   const sizeInfo = selectedSizeInfo();
@@ -933,9 +997,14 @@ function updateUi() {
   $('#labelSize').disabled = !selectedLabel;
   if (selectedLabel) { $('#labelSize').value = String(selectedLabel.fontSize || 16); $('#labelSizeValue').textContent = `${selectedLabel.fontSize || 16}px`; }
   else { $('#labelSizeValue').textContent = '0'; }
+  const selectedPolygon = state.selectedShape !== null && state.shapes[state.selectedShape]?.type === 'polygon' ? state.shapes[state.selectedShape] : null;
+  $('#selectedPolygonArea').textContent = selectedPolygon ? formatArea(polygonAreaSquareFeet(selectedPolygon)) : 'No polygon selected';
+  $('#selectedPolygonVertices').textContent = selectedPolygon ? String(selectedPolygon.points.length) : '\u2014';
+  $('#totalPolygonArea').textContent = formatArea(state.shapes.filter((shape) => shape.type === 'polygon').reduce((total, shape) => total + polygonAreaSquareFeet(shape), 0));
   renderLayerControls();
   renderViewList();
   renderWallList();
+  renderPolygonAreaList();
 }
 
 function setCanvasCursor() {
@@ -945,6 +1014,15 @@ function setCanvasCursor() {
 function beginPan(event) {
   state.panning = true; state.panPointer = screenPoint(event); canvas.setPointerCapture(event.pointerId); setCanvasCursor();
 }
+
+function finishPolygon() {
+  if (state.polygonPoints.length >= 3 && polygonAreaPixels(state.polygonPoints) > 0) {
+    const shape = { type: 'polygon', points: structuredClone(state.polygonPoints), color: DEFAULT_SHAPE_COLOR, shade: 1 };
+    commitShapes([...state.shapes, shape]); state.selectedShape = state.shapes.length - 1;
+  }
+  state.drawingPolygon = false; state.polygonPoints = []; state.polygonPointer = null; updateUi(); draw();
+}
+function cancelPolygon() { state.drawingPolygon = false; state.polygonPoints = []; state.polygonPointer = null; draw(); }
 
 canvas.addEventListener('pointerdown', (event) => {
   if (event.button === 1 || state.tool === 'pan' || state.spacePressed) { event.preventDefault(); beginPan(event); return; }
@@ -975,6 +1053,12 @@ canvas.addEventListener('pointerdown', (event) => {
     canvas.setPointerCapture(event.pointerId); draw(); return;
   }
   if (state.tool === 'shapes') {
+    if (state.shapeKind === 'polygon' && state.drawingPolygon) {
+      const closeDistance = state.polygonPoints.length ? Math.hypot(point.x - state.polygonPoints[0].x, point.y - state.polygonPoints[0].y) : Infinity;
+      if (state.polygonPoints.length >= 3 && closeDistance <= 12 / state.zoom) finishPolygon();
+      else if (!state.polygonPoints.some((vertex) => samePoint(vertex, point))) state.polygonPoints.push(point);
+      state.polygonPointer = point; draw(); return;
+    }
     let index = state.selectedShape, part = index !== null && state.shapes[index] && floorItemVisible(state.shapes[index]) ? shapePartAtEvent(event, state.shapes[index]) : null;
     if (!part) {
       index = -1;
@@ -986,6 +1070,7 @@ canvas.addEventListener('pointerdown', (event) => {
       canvas.setPointerCapture(event.pointerId); setCanvasCursor(); updateUi(); draw(); return;
     }
     state.selectedShape = null;
+    if (state.shapeKind === 'polygon') { state.drawingPolygon = true; state.polygonPoints = [point]; state.polygonPointer = point; updateUi(); draw(); return; }
     state.drawingShape = true; state.shapeStart = point; state.shapePreview = shapeFromDrag(state.shapeKind, point, point);
     canvas.setPointerCapture(event.pointerId); draw(); return;
   }
@@ -1106,6 +1191,7 @@ canvas.addEventListener('pointermove', (event) => {
   if (state.drawingShape) {
     state.shapePreview = shapeFromDrag(state.shapeKind, state.shapeStart, canvasPoint(event)); draw(); return;
   }
+  if (state.drawingPolygon) { state.polygonPointer = canvasPoint(event); draw(); return; }
   if (state.editingHandle && state.selectedWall !== null) {
     const point = canvasPoint(event);
     state.walls[state.selectedWall] = { ...state.walls[state.selectedWall], [state.editingHandle]: point };
@@ -1187,6 +1273,7 @@ function endPointer() {
 }
 canvas.addEventListener('pointerup', endPointer); canvas.addEventListener('pointercancel', endPointer);
 canvas.addEventListener('dblclick', (event) => {
+  if (state.tool === 'shapes' && state.shapeKind === 'polygon' && state.drawingPolygon) { event.preventDefault(); finishPolygon(); return; }
   const index = labelAtPoint(rawCanvasPoint(event));
   if (index < 0) return;
   const text = prompt('Edit label text:', state.labels[index].text);
@@ -1208,6 +1295,7 @@ function setTool(tool) {
   state.rulerDragMode = null; state.rulerDragSnapshot = null; state.rulerDragStart = null; state.rulerDragOriginal = null;
   state.drawingRuler = false; state.rulerStart = null; state.rulerPreview = null;
   state.drawingShape = false; state.shapeStart = null; state.shapePreview = null;
+  cancelPolygon();
   state.drawingView = false; state.viewStart = null; state.viewPreview = null; state.viewSnapshot = null;
   state.shapeDragMode = null; state.shapeDragSnapshot = null; state.shapeDragStart = null; state.shapeDragOriginal = null;
   state.objectDragMode = null; state.objectDragSnapshot = null; state.objectDragStart = null; state.objectDragOriginal = null;
@@ -1225,7 +1313,7 @@ function setTool(tool) {
     wall: ['Wall tool', 'Drag between grid points - Hold Shift for a straight wall'],
     edit: [state.selectMode === 'highlight' ? 'Highlight Select' : 'Select tool', state.selectMode === 'highlight' ? 'Drag a box around complete items; drag a highlighted item to move the group' : 'Select a wall or column; drag endpoints, handles, or the column body'],
     ruler: ['Ruler tool', 'Drag to measure; select and drag a line, endpoint, or label'],
-    shapes: ['Shapes tool', 'Choose a shape, then drag on the canvas; selected shapes can be moved or resized'],
+    shapes: ['Shapes tool', state.shapeKind === 'polygon' ? 'Click each corner; click the first point or double-click to finish' : 'Choose a shape, then drag on the canvas; selected shapes can be moved or resized'],
     objects: ['Column tool', 'Click to insert a 1 ft x 1 ft column; drag to move or resize'],
     view: ['Add view', 'Drag a rectangle around the area to save as a view'],
     text: ['Text tool', 'Click to add - Drag to move - Double-click to edit'],
@@ -1259,7 +1347,8 @@ function applyProject(project, options = {}) {
   if (project.rulers !== undefined && (!Array.isArray(project.rulers) || !project.rulers.every((ruler) => validPoint(ruler.a) && validPoint(ruler.b))))
     throw new Error('This plan contains invalid rulers.');
   if (project.shapes !== undefined && (!Array.isArray(project.shapes) || !project.shapes.every((shape) => {
-    if (!shape || !['square', 'rectangle', 'circle', 'line', 'semicircle'].includes(shape.type)) return false;
+    if (!shape || !['square', 'rectangle', 'circle', 'line', 'semicircle', 'polygon'].includes(shape.type)) return false;
+    if (shape.type === 'polygon') return (shape.name === undefined || typeof shape.name === 'string' && shape.name.length <= 80) && Array.isArray(shape.points) && shape.points.length >= 3 && shape.points.length <= 100 && shape.points.every(validPoint) && polygonAreaPixels(shape.points) > 0;
     return ['square', 'rectangle', 'line'].includes(shape.type) ? validPoint(shape.a) && validPoint(shape.b) : validPoint(shape.center) && Number.isFinite(Number(shape.radius));
   }))) throw new Error('This plan contains invalid shapes.');
   if (project.objects !== undefined && (!Array.isArray(project.objects) || !project.objects.every((object) =>
@@ -1287,7 +1376,8 @@ function applyProject(project, options = {}) {
     layerId: layerAssignmentId(ruler.layerId),
   }));
   state.shapes = (project.shapes || []).map((shape) => {
-    const style = { color: normalizeColor(shape.color, DEFAULT_SHAPE_COLOR), shade: normalizeShade(shape.shade), layerId: layerAssignmentId(shape.layerId) };
+    const style = { color: normalizeColor(shape.color, DEFAULT_SHAPE_COLOR), shade: normalizeShade(shape.shade, shape.type === 'polygon' ? 0 : .2), layerId: layerAssignmentId(shape.layerId) };
+    if (shape.type === 'polygon') return { type: 'polygon', ...(normalizePolygonName(shape.name) ? { name: normalizePolygonName(shape.name) } : {}), points: shape.points.map((point) => ({ x: Number(point.x), y: Number(point.y) })), ...style };
     if (shape.type === 'square' || shape.type === 'rectangle' || shape.type === 'line') return { type: shape.type, a: { x: Number(shape.a.x), y: Number(shape.a.y) }, b: { x: Number(shape.b.x), y: Number(shape.b.y) }, ...style };
     return { type: shape.type, center: { x: Number(shape.center.x), y: Number(shape.center.y) }, radius: Math.max(0, Number(shape.radius)), ...style };
   });
@@ -1393,6 +1483,13 @@ document.querySelectorAll('[data-object]').forEach((button) => button.addEventLi
   document.querySelectorAll('[data-object]').forEach((choice) => choice.classList.toggle('active', choice === button));
   setTool('objects');
 }));
+function setPropertiesOpen(open) {
+  $('#extendedProperties').hidden = !open; $('#propertiesToggle').classList.toggle('open', open);
+  $('#propertiesToggle').textContent = open ? '\u203a' : '\u2039'; $('#propertiesToggle').setAttribute('aria-expanded', String(open));
+  $('#propertiesToggle').setAttribute('aria-label', open ? 'Close extended properties' : 'Open extended properties');
+}
+$('#propertiesToggle').addEventListener('click', () => setPropertiesOpen($('#extendedProperties').hidden));
+$('#propertiesClose').addEventListener('click', () => setPropertiesOpen(false));
 $('#undoButton').addEventListener('click', undo); $('#redoButton').addEventListener('click', redo);
 $('#addViewButton').addEventListener('click', () => setTool('view'));
 $('#centerButton').addEventListener('click', () => { if (state.offset.x || state.offset.y) markDirty(); state.offset = { x: 0, y: 0 }; persist(); draw(); });
@@ -1428,7 +1525,7 @@ $('#lineColor').addEventListener('change', commitLineStyleChange);
 $('#lineShade').addEventListener('input', (event) => {
   const selected = selectedLineElement(); if (!selected) return;
   if (!state.lineStyleSnapshot) state.lineStyleSnapshot = documentSnapshot();
-  selected.item.shade = normalizeShade(Number(event.target.value) / 100); markDirty();
+  selected.item.shade = normalizeShade(Number(event.target.value) / 100, selected.item.type === 'polygon' ? 0 : .2); markDirty();
   $('#lineShadeValue').textContent = `${Math.round(selected.item.shade * 100)}%`; draw();
 });
 $('#lineShade').addEventListener('change', commitLineStyleChange);
@@ -1508,6 +1605,8 @@ $('#exportButton').addEventListener('click', () => {
 window.addEventListener('keydown', (event) => {
   if (typeof elevationPageActive === 'function' && elevationPageActive()) return;
   if (event.code === 'Space' && !event.repeat) { state.spacePressed = true; setCanvasCursor(); event.preventDefault(); }
+  if (state.drawingPolygon && event.key === 'Backspace' && !isTypingTarget(event.target)) { event.preventDefault(); state.polygonPoints.pop(); if (!state.polygonPoints.length) cancelPolygon(); else draw(); return; }
+  if (state.drawingPolygon && event.key === 'Escape') { event.preventDefault(); cancelPolygon(); return; }
   if (event.key.toLowerCase() === 'w') setTool('wall'); if (event.key.toLowerCase() === 'v') setTool('edit'); if (event.key.toLowerCase() === 'r') setTool('ruler'); if (event.key.toLowerCase() === 's') setTool('shapes'); if (event.key.toLowerCase() === 'o') setTool('objects'); if (event.key.toLowerCase() === 't') setTool('text'); if (event.key.toLowerCase() === 'e') setTool('erase'); if (event.key.toLowerCase() === 'p') setTool('pan');
   if ((event.key === 'Delete' || event.key === 'Backspace') && state.tool === 'text' && state.selectedLabel !== null) {
     event.preventDefault(); const selected = state.selectedLabel; state.selectedLabel = null; commitLabels(state.labels.filter((_, index) => index !== selected));

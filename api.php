@@ -84,11 +84,24 @@ function validate_plan($plan): void
         $type = is_array($shape) ? ($shape['type'] ?? '') : '';
         $linear = $type === 'square' || $type === 'rectangle' || $type === 'line';
         $radial = $type === 'circle' || $type === 'semicircle';
-        if ((!$linear && !$radial)
+        $polygon = $type === 'polygon';
+        $validPolygon = $polygon && isset($shape['points']) && is_array($shape['points'])
+            && count($shape['points']) >= 3 && count($shape['points']) <= 100;
+        if ($polygon && isset($shape['name']) && (!is_string($shape['name']) || strlen($shape['name']) > 320)) $validPolygon = false;
+        if ($validPolygon) {
+            foreach ($shape['points'] as $point) {
+                if (!valid_point($point)) { $validPolygon = false; break; }
+            }
+        }
+        $validShapeShade = !isset($shape['shade']) || ($polygon
+            ? finite_number($shape['shade']) && $shape['shade'] >= 0 && $shape['shade'] <= 1
+            : valid_shade($shape['shade']));
+        if ((!$linear && !$radial && !$polygon)
             || ($linear && (!valid_point($shape['a'] ?? null) || !valid_point($shape['b'] ?? null)))
             || ($radial && (!valid_point($shape['center'] ?? null) || !isset($shape['radius']) || !finite_number($shape['radius']) || $shape['radius'] < 0))
+            || ($polygon && !$validPolygon)
             || (isset($shape['color']) && !valid_color($shape['color']))
-            || (isset($shape['shade']) && !valid_shade($shape['shade']))) {
+            || !$validShapeShade) {
             respond(422, ['error' => 'The plan contains an invalid shape.']);
         }
     }
